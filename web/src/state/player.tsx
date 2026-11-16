@@ -92,6 +92,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const lastSaved = useRef(0);
   const marked = useRef(new Set<string>());
   const pendingSeek = useRef<number | null>(null);
+  /** True while the loaded edition was only cued (shown) and never started. */
+  const cuedOnly = useRef(false);
 
   // Keep the loaded edition in sync with fresher list data (title, listened, etc.).
   useEffect(() => {
@@ -143,6 +145,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const resume = savedPosition(e.id);
       pendingSeek.current = resume > 0 ? resume : null;
       lastSaved.current = resume;
+      cuedOnly.current = !autoplay;
       a.src = e.audioUrl;
       a.defaultPlaybackRate = rate;
       a.playbackRate = rate;
@@ -174,7 +177,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const cue = useCallback(
     (e: EditionDto) => {
-      if (!editionRef.current && playable(e)) load(e, false);
+      if (!playable(e)) return;
+      const cur = editionRef.current;
+      if (!cur || (cuedOnly.current && cur.id !== e.id && audioRef.current?.paused)) load(e, false);
     },
     [load],
   );
@@ -250,6 +255,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       a.playbackRate = a.defaultPlaybackRate;
     };
     const onPlay = () => {
+      cuedOnly.current = false;
       setPlaying(true);
       setError(null);
     };

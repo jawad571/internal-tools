@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { LIMITS, TONES, type PreferencesDto, type ToneId } from '@shared/contracts';
+import { LIMITS, TONES } from '@shared/constants';
+import type { PreferencesDto, ToneId } from '@shared/contracts';
 import { api, errorMessage } from '../lib/api';
 import { usePlayer } from '../state/player';
 import { usePreferences, useVoices } from '../state/data';

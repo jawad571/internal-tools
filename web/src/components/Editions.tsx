@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { LIMITS, type EditionDto } from '@shared/contracts';
+import { LIMITS } from '@shared/constants';
+import type { EditionDto } from '@shared/contracts';
 import { errorMessage, type EditionKind } from '../lib/api';
 import { STATUS_TEXT, dayHeading, dayKey, hourLabel, isInProgress, kindLabel, minutesLabel, editionTitle } from '../lib/format';
 import { useMe } from '../state/auth';

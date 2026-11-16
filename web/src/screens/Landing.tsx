@@ -1,6 +1,6 @@
 import { useEffect, useId, useState, type FormEvent } from 'react';
 import { useLocation, useNavigate } from 'react-router';
-import { LIMITS } from '@shared/contracts';
+import { LIMITS } from '@shared/constants';
 import { api, errorMessage } from '../lib/api';
 import { useAuth } from '../state/auth';
 import { Icon } from '../components/Icon';
@@ -48,13 +48,11 @@ export function Landing({ mode: initialMode }: { mode: 'signup' | 'login' }) {
         const displayName = String(f.get('displayName') ?? '').trim();
         if (password.length < 8) throw new Error('Use at least 8 characters for your password.');
         const me = await api.signup({ email, password, displayName, timezone: browserTimezone() });
-        setMe(me);
-        navigate('/welcome', { replace: true });
+        setMe(me, '/welcome');
       } else {
         const me = await api.login({ email, password });
-        setMe(me);
         const from = (location.state as { from?: string } | null)?.from;
-        navigate(from && from.startsWith('/') ? from : '/listen', { replace: true });
+        setMe(me, from && from.startsWith('/') && from !== '/login' ? from : '/listen');
       }
     } catch (e) {
       setError(errorMessage(e));

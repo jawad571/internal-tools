@@ -6,29 +6,15 @@
  * Errors are `{ error: { code, message } }` with an appropriate HTTP status.
  */
 import { z } from 'zod';
+import { LIMITS } from './constants.ts';
+
+export { LIMITS, TONES } from './constants.ts';
 
 // ---------- enums & limits ----------
 
-export const TONES = [
-  { id: 'neutral', label: 'Neutral', blurb: 'Straight wire-service delivery. Facts first, no colour.' },
-  { id: 'warm', label: 'Warm', blurb: 'A friendly host who is glad you tuned in.' },
-  { id: 'energetic', label: 'Energetic', blurb: 'Upbeat morning-radio pace.' },
-  { id: 'calm', label: 'Calm', blurb: 'Unhurried and soothing. Good for late evening.' },
-  { id: 'witty', label: 'Witty', blurb: 'Dry asides between stories; never at the expense of accuracy.' },
-  { id: 'formal', label: 'Formal', blurb: 'Classic broadcast newsreader.' },
-] as const;
 export const ToneId = z.enum(['neutral', 'warm', 'energetic', 'calm', 'witty', 'formal']);
 export type ToneId = z.infer<typeof ToneId>;
 
-export const LIMITS = {
-  standardMinutes: { min: 5, max: 10, default: 7 },
-  extendedMinutes: { min: 10, max: 20, default: 15 },
-  toneNoteMax: 280,
-  plans: {
-    free: { maxSources: 8, maxActiveHours: 6, onDemandPerDay: 2, defaultActiveHours: [6, 9, 12, 15, 18, 21] },
-    pro: { maxSources: 60, maxActiveHours: 24, onDemandPerDay: 12, defaultActiveHours: [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21] },
-  },
-} as const;
 export const Plan = z.enum(['free', 'pro']);
 export type Plan = z.infer<typeof Plan>;
 

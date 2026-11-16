@@ -8,7 +8,9 @@ type AuthState = {
   me: Me | null;
   /** True when the session ended underneath us (a 401), so the login screen can say why. */
   expired: boolean;
-  setMe: (me: Me) => void;
+  /** Where the public screens should send the user once signed in (e.g. onboarding after signup). */
+  nextPath: string | null;
+  setMe: (me: Me, nextPath?: string) => void;
   logout: () => Promise<void>;
 };
 
@@ -18,6 +20,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMeState] = useState<Me | null>(null);
   const [status, setStatus] = useState<AuthState['status']>('loading');
   const [expired, setExpired] = useState(false);
+  const [nextPath, setNextPath] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,7 +53,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => onUnauthorized(null);
   }, []);
 
-  const setMe = useCallback((m: Me) => {
+  const setMe = useCallback((m: Me, next?: string) => {
+    if (next !== undefined) setNextPath(next);
     setMeState(m);
     setStatus('authed');
     setExpired(false);
@@ -68,7 +72,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus('anon');
   }, []);
 
-  const value = useMemo(() => ({ status, me, expired, setMe, logout }), [status, me, expired, setMe, logout]);
+  const value = useMemo(
+    () => ({ status, me, expired, nextPath, setMe, logout }),
+    [status, me, expired, nextPath, setMe, logout],
+  );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 

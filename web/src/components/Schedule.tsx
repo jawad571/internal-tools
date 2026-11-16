@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
-import { LIMITS, type PreferencesDto } from '@shared/contracts';
+import { LIMITS } from '@shared/constants';
+import type { PreferencesDto } from '@shared/contracts';
 import { api } from '../lib/api';
 import { hourLabel } from '../lib/format';
 import { useAuth, useMe } from '../state/auth';
@@ -173,6 +174,7 @@ export function TimezonePicker({ run }: { run: Saver }) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const listId = useId();
   const searchId = useId();
   const zones = useMemo(() => allZones(me.timezone), [me.timezone]);
@@ -183,7 +185,9 @@ export function TimezonePicker({ run }: { run: Saver }) {
   }, [zones, q]);
 
   useEffect(() => {
-    if (open) inputRef.current?.focus();
+    if (!open) return;
+    inputRef.current?.focus({ preventScroll: true });
+    panelRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [open]);
 
   const choose = (tz: string) => {
@@ -210,7 +214,7 @@ export function TimezonePicker({ run }: { run: Saver }) {
         </span>
       </button>
       {open && (
-        <div className="tz-panel" id={listId}>
+        <div className="tz-panel" id={listId} ref={panelRef}>
           <label htmlFor={searchId} className="visually-hidden">
             Search time zones
           </label>

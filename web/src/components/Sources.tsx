@@ -1,5 +1,6 @@
 import { useCallback, useId, useMemo, useState, type FormEvent } from 'react';
-import { LIMITS, type MySourceDto, type SourceDto } from '@shared/contracts';
+import { LIMITS } from '@shared/constants';
+import type { MySourceDto, SourceDto } from '@shared/contracts';
 import { api, errorMessage } from '../lib/api';
 import { hostOf } from '../lib/format';
 import { mutateResource } from '../lib/resource';

@@ -26,14 +26,14 @@ function RequireAuth({ children }: { children: ReactNode }) {
   const { status, expired } = useAuth();
   const location = useLocation();
   if (status === 'loading') return <Splash />;
-  if (status === 'anon') return <Navigate to={expired ? '/login' : '/'} replace state={{ from: location.pathname }} />;
+  if (status === 'anon') return <Navigate to="/login" replace state={expired ? { from: location.pathname } : undefined} />;
   return <>{children}</>;
 }
 
 function PublicOnly({ children }: { children: ReactNode }) {
-  const { status } = useAuth();
+  const { status, nextPath } = useAuth();
   if (status === 'loading') return <Splash />;
-  if (status === 'authed') return <Navigate to="/listen" replace />;
+  if (status === 'authed') return <Navigate to={nextPath ?? '/listen'} replace />;
   return <>{children}</>;
 }
 

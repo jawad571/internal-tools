@@ -65,9 +65,12 @@ export function Onboarding() {
             <span className="ob-step-name"> · {STEPS[step]}</span>
           </span>
         </div>
-        <button type="button" className="btn btn-quiet btn-sm" onClick={() => navigate('/listen', { replace: true })}>
-          Skip setup
-        </button>
+        <div className="ob-top-right">
+          <SaveIndicator status={status} />
+          <button type="button" className="btn btn-quiet btn-sm" onClick={() => navigate('/listen', { replace: true })}>
+            Skip setup
+          </button>
+        </div>
         <div
           className="ob-progress"
           role="progressbar"
@@ -142,7 +145,6 @@ export function Onboarding() {
       </main>
 
       <footer className="ob-actions">
-        <SaveIndicator status={status} />
         {err && step === 2 && (
           <p className="field-error" role="alert">
             <Icon name="alert" size={16} /> {err}

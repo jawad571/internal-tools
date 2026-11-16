@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { LIMITS } from '@shared/contracts';
+import { LIMITS } from '@shared/constants';
 import { api } from '../lib/api';
 import { useAuth, useMe } from '../state/auth';
 import { usePlayer } from '../state/player';
@@ -104,11 +104,10 @@ export function Account() {
           </p>
         </div>
         <div className="card">
-          <label htmlFor={ids.feed} className="visually-hidden">
-            Private podcast feed URL
-          </label>
           <div className="copy-row">
-            <input id={ids.feed} readOnly value={me.podcastFeedUrl} aria-describedby={ids.feedHelp} onFocus={(e) => e.currentTarget.select()} className="mono" />
+            <p id={ids.feed} className="feed-url mono" aria-label="Private podcast feed URL" aria-describedby={ids.feedHelp}>
+              {me.podcastFeedUrl}
+            </p>
             <button
               type="button"
               className="btn btn-secondary"
