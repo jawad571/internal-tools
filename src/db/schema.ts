@@ -85,7 +85,7 @@ export const articles = pgTable(
     sourceId: uuid('source_id')
       .notNull()
       .references(() => sources.id, { onDelete: 'cascade' }),
-    /** Feed guid, falling back to the link. */
+    /** Feed guid, falling back to the link, then a hash of the title. */
     guid: text('guid').notNull(),
     url: text('url'),
     title: text('title').notNull(),
@@ -161,7 +161,7 @@ export const editions = pgTable(
   },
   (t) => [
     uniqueIndex('editions_user_slot_uq').on(t.userId, t.slotAt),
-    index('editions_status_idx').on(t.status, t.createdAt),
+    index('editions_status_slot_idx').on(t.status, t.slotAt),
   ],
 );
 

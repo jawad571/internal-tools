@@ -113,6 +113,6 @@ CREATE UNIQUE INDEX "articles_source_guid_uq" ON "articles" USING btree ("source
 CREATE INDEX "articles_source_published_idx" ON "articles" USING btree ("source_id","published_at");--> statement-breakpoint
 CREATE INDEX "edition_articles_article_idx" ON "edition_articles" USING btree ("article_id");--> statement-breakpoint
 CREATE UNIQUE INDEX "editions_user_slot_uq" ON "editions" USING btree ("user_id","slot_at");--> statement-breakpoint
-CREATE INDEX "editions_status_idx" ON "editions" USING btree ("status","created_at");--> statement-breakpoint
+CREATE INDEX "editions_status_slot_idx" ON "editions" USING btree ("status","slot_at");--> statement-breakpoint
 CREATE INDEX "sessions_user_idx" ON "sessions" USING btree ("user_id");--> statement-breakpoint
 CREATE INDEX "user_sources_source_idx" ON "user_sources" USING btree ("source_id");
