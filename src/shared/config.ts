@@ -20,12 +20,12 @@ const Env = z.object({
   SCRIPT_MODEL: z.string().default('claude-sonnet-5-5'),
 
   // --- text to speech ---
-  /** Defaults to openai/elevenlabs if their key is set, else mock. */
+  /** Defaults to elevenlabs if its key is set, else openai if its key is set, else mock. */
   TTS_PROVIDER: z.enum(['openai', 'elevenlabs', 'mock']).optional(),
   OPENAI_API_KEY: z.string().optional(),
   OPENAI_TTS_MODEL: z.string().default('gpt-4o-mini-tts'),
   ELEVENLABS_API_KEY: z.string().optional(),
-  ELEVENLABS_MODEL: z.string().default('eleven_multilingual_v2'),
+  ELEVENLABS_MODEL: z.string().default('eleven_v4'),
 
   // --- audio storage ---
   STORAGE: z.enum(['local', 's3']).default('local'),
@@ -53,6 +53,6 @@ export type Config = z.infer<typeof Env> & { ttsProvider: 'openai' | 'elevenlabs
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
   const e = Env.parse(env);
-  const ttsProvider = e.TTS_PROVIDER ?? (e.OPENAI_API_KEY ? 'openai' : e.ELEVENLABS_API_KEY ? 'elevenlabs' : 'mock');
+  const ttsProvider = e.TTS_PROVIDER ?? (e.ELEVENLABS_API_KEY ? 'elevenlabs' : e.OPENAI_API_KEY ? 'openai' : 'mock');
   return { ...e, ttsProvider, cookieSecure: e.COOKIE_SECURE ?? e.NODE_ENV === 'production' };
 }

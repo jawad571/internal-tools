@@ -18,7 +18,8 @@ placeholder script writer and a placeholder voice (a tone, not speech), so the w
 without accounts. Copy `.env.example` to `.env` and set:
 
 - `ANTHROPIC_API_KEY` — real bulletin scripts
-- `OPENAI_API_KEY` or `ELEVENLABS_API_KEY` — real voices
+- `ELEVENLABS_API_KEY` — real voices (ElevenLabs v4, the most natural); `OPENAI_API_KEY` also works
+  until OpenAI retires its TTS models on 2027-01-06
 - `DATABASE_URL=postgres://…`, `STORAGE=s3`, `PUBLIC_URL` — production
 
 In production run `ROLE=web` and `ROLE=worker` as separate processes; any number of each.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ElevenLabsTts } from '../../src/providers/tts/elevenlabs.ts';
+import { ElevenLabsTts, maxCharsFor } from '../../src/providers/tts/elevenlabs.ts';
 import { MockTts } from '../../src/providers/tts/mock.ts';
 import { parseFrameHeader } from '../../src/providers/tts/mp3.ts';
 import { OpenAiTts } from '../../src/providers/tts/openai.ts';
@@ -101,5 +101,16 @@ describe('ElevenLabsTts', () => {
     expect(a!.body.previous_text).toBeUndefined();
     expect(b!.body.previous_text).toBeTruthy();
     expect(res.durationSeconds).toBeCloseTo(rec.calls.length * 4 * FRAME_S, 6);
+  });
+
+  it('sends a full-length bulletin to eleven_v4 in a single request', async () => {
+    const rec = recordingFetch(() => new Response(mp3(4)));
+    const tts = new ElevenLabsTts({ apiKey: 'xi', model: 'eleven_v4', fetch: rec.fn });
+    const bulletin = 'A sentence of roughly sixty characters for the news test. '.repeat(150);
+    expect(bulletin.length).toBeGreaterThan(4500);
+    expect(bulletin.length).toBeLessThan(maxCharsFor('eleven_v4'));
+    await tts.synthesize({ text: bulletin, voiceId: tts.defaultVoiceId(), tone: 'neutral' });
+    expect(rec.calls).toHaveLength(1);
+    expect(rec.calls[0]!.body).toMatchObject({ model_id: 'eleven_v4' });
   });
 });

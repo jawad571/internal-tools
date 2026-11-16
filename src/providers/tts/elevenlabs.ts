@@ -5,8 +5,14 @@ import { chunkText } from './chunk.ts';
 import { concatMp3, mp3DurationSeconds } from './mp3.ts';
 
 const BASE = 'https://api.elevenlabs.io/v1/text-to-speech';
-/** Well under the per-request character limit of the multilingual models; long requests also drift in prosody. */
-const MAX_CHARS = 4500;
+/**
+ * Per-request text size, kept under each model's limit. eleven_v4 takes 10,000 characters and stays
+ * consistent over long text, so a normal bulletin goes in one request with no chunk seams; older models
+ * (5,000 limit) drift in prosody on long requests, so they get smaller chunks.
+ */
+export function maxCharsFor(model: string): number {
+  return /^eleven_v4/.test(model) ? 9500 : 4500;
+}
 
 // Stock "premade" voices from the ElevenLabs default library.
 const VOICES: VoiceDto[] = [
@@ -45,7 +51,7 @@ export class ElevenLabsTts implements TtsProvider {
 
   async synthesize({ text, voiceId, tone }: Parameters<TtsProvider['synthesize']>[0]): Promise<SynthesisResult> {
     const doFetch = this.opts.fetch ?? fetch;
-    const chunks = chunkText(text, MAX_CHARS);
+    const chunks = chunkText(text, maxCharsFor(this.opts.model));
     const url = `${BASE}/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`;
     const parts = await mapLimit(chunks, this.opts.concurrency ?? 2, (chunk, i) =>
       withRetry(async () => {
