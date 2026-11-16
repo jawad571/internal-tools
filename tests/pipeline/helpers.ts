@@ -5,6 +5,7 @@ import { MemoryBlobStore } from '../../src/providers/blobs/memory.ts';
 import { FeedFetcher, type LookupFn } from '../../src/providers/feeds/fetch.ts';
 import { MockScriptWriter } from '../../src/providers/script/mock.ts';
 import { MockTts } from '../../src/providers/tts/mock.ts';
+import { MockVideoRenderer } from '../../src/providers/video/mock.ts';
 import { loadConfig, type Config } from '../../src/shared/config.ts';
 import type { Deps } from '../../src/shared/deps.ts';
 
@@ -44,6 +45,7 @@ export async function setup(over: Partial<Deps> = {}, config: Partial<Config> = 
     db,
     scriptWriter: new MockScriptWriter(),
     tts: new MockTts(cfg.WORDS_PER_MINUTE),
+    video: new MockVideoRenderer(),
     blobs,
     feeds: new FeedFetcher({ fetch: fakeFetch({}).fetch, lookup: publicLookup }),
     now: () => now,
@@ -94,7 +96,11 @@ export async function createSource(db: Db, opts: { url?: string; title?: string;
 export const subscribe = (db: Db, userId: string, sourceId: string, weight = 1) =>
   db.insert(userSources).values({ userId, sourceId, weight });
 
-export async function addArticle(db: Db, sourceId: string, opts: { title: string; publishedAt?: Date; summary?: string; guid?: string }) {
+export async function addArticle(
+  db: Db,
+  sourceId: string,
+  opts: { title: string; publishedAt?: Date; summary?: string; guid?: string; imageUrl?: string | null },
+) {
   const [a] = await db
     .insert(articles)
     .values({
@@ -103,6 +109,7 @@ export async function addArticle(db: Db, sourceId: string, opts: { title: string
       title: opts.title,
       summary: opts.summary ?? `${opts.title}. More detail about this story follows here for the listener.`,
       publishedAt: opts.publishedAt ?? new Date(NOW.getTime() - 3600_000),
+      imageUrl: opts.imageUrl ?? null,
     })
     .returning();
   return a!;

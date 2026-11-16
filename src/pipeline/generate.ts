@@ -1,11 +1,13 @@
 import { and, eq, inArray, lt, or, sql } from 'drizzle-orm';
 import { editionArticles, editions, preferences, users } from '../db/schema.ts';
+import { languageInfo, wordsPerMinuteFor } from '../shared/constants.ts';
 import { ToneId } from '../shared/contracts.ts';
 import type { Deps } from '../shared/deps.ts';
 import { spokenSlotLabel } from '../shared/time.ts';
 import { errorMessage, truncate } from '../providers/util.ts';
 import { ingestDueSources } from './ingest.ts';
 import { selectStories } from './select.ts';
+import { segmentTimeline } from './timeline.ts';
 
 export const MAX_ATTEMPTS = 3;
 const STALE_CLAIM_MS = 10 * 60_000;
@@ -87,7 +89,9 @@ export async function generateEdition(deps: Deps, editionId: string): Promise<Ge
       // Typically a new user who subscribed seconds ago: don't make them wait for the ingest loop.
       await ingestDueSources(deps).catch((e) => console.error('[generate] pre-ingest failed:', errorMessage(e)));
     }
-    const targetWords = Math.round((edition.targetSeconds / 60) * config.WORDS_PER_MINUTE);
+    // Snapshotted with the voice when the edition was queued; unknown codes fall back to English.
+    const language = languageInfo(edition.language).code;
+    const targetWords = Math.round((edition.targetSeconds / 60) * wordsPerMinuteFor(language, config.WORDS_PER_MINUTE));
     const { stories, previouslyCovered } = await selectStories(deps, user.id, { kind: edition.kind, slotAt: edition.slotAt, targetWords });
     if (!stories.length) {
       if (edition.trigger === 'on_demand') {
@@ -99,7 +103,6 @@ export async function generateEdition(deps: Deps, editionId: string): Promise<Ge
       return 'skipped';
     }
 
-    const language = prefs?.language ?? 'en';
     const tone = ToneId.catch('neutral').parse(edition.tone);
     const toneNote = prefs?.toneNote ?? '';
     const script = await deps.scriptWriter.write({
@@ -116,9 +119,19 @@ export async function generateEdition(deps: Deps, editionId: string): Promise<Ge
     const supplied = new Set(stories.map((s) => s.articleId));
     const usedIds = [...new Set(script.usedArticleIds)].filter((id) => supplied.has(id));
 
-    await touch({ status: 'synthesizing', title: script.title, script: script.script });
-    const voiceId = deps.tts.voices().some((v) => v.id === edition.voiceId) ? edition.voiceId : deps.tts.defaultVoiceId();
-    const audio = await deps.tts.synthesize({ text: script.script, voiceId, tone, toneNote });
+    const titleEn = language === 'en' ? null : (script.titleEn?.trim() || null);
+    await touch({ status: 'synthesizing', title: script.title, titleEn, script: script.script });
+    // The snapshotted voice is honoured even if it isn't meant for this language: the preferences
+    // route only lets that happen when the listener picked it explicitly. A voice the provider no
+    // longer has is replaced by the language's default.
+    const voiceId = deps.tts.voices().some((v) => v.id === edition.voiceId) ? edition.voiceId : deps.tts.defaultVoiceId(language);
+    const audio = await deps.tts.synthesize({ text: script.script, voiceId, tone, toneNote, language });
+    const used = new Set(usedIds);
+    const scriptSegments = script.segments?.length
+      ? script.segments.map((s) => ({ text: s.text, articleId: s.articleId && used.has(s.articleId) ? s.articleId : null }))
+      : [{ articleId: null, text: script.script }];
+    const segments = segmentTimeline(scriptSegments, audio.alignment, audio.durationSeconds);
+    const wantsVideo = config.VIDEO_ENABLED && (prefs?.videoBulletins ?? false);
 
     const audioKey = `editions/${user.id}/${edition.id}.${extFor(audio.mime)}`;
     await deps.blobs.put(audioKey, audio.audio, audio.mime);
@@ -131,6 +144,9 @@ export async function generateEdition(deps: Deps, editionId: string): Promise<Ge
           audioMime: audio.mime,
           audioBytes: audio.audio.length,
           durationSeconds: Math.round(audio.durationSeconds),
+          segments,
+          // Rendered afterwards by the video queue (pipeline/video.ts); the audio is playable now.
+          videoStatus: wantsVideo ? 'pending' : 'none',
           readyAt: deps.now(),
           error: null,
           claimedAt: null,

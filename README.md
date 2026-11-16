@@ -20,6 +20,11 @@ without accounts. Copy `.env.example` to `.env` and set:
 - `ANTHROPIC_API_KEY` — real bulletin scripts
 - `ELEVENLABS_API_KEY` — real voices (ElevenLabs v4, the most natural); `OPENAI_API_KEY` also works
   until OpenAI retires its TTS models on 2027-01-06
+- Bulletins can be spoken in English or Urdu (Voice & tone → Bulletin language). Urdu uses native
+  Urdu voices from the ElevenLabs Voice Library, which needs a paid ElevenLabs plan (the free tier
+  can't use library voices over the API). Video text stays in English either way
+- `VIDEO_ENABLED=true` — also render a video version (story images, headlines, ticker) for users
+  who switch on "Video bulletins" under Voice & tone. ffmpeg ships with the `ffmpeg-static` package
 - `DATABASE_URL=postgres://…`, `STORAGE=s3`, `PUBLIC_URL` — production
 
 In production run `ROLE=web` and `ROLE=worker` as separate processes; any number of each.

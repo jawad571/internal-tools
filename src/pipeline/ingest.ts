@@ -46,7 +46,7 @@ export async function ingestDueSources(deps: Deps): Promise<IngestSummary> {
       if (fresh.length) {
         const rows = await db
           .insert(articles)
-          .values(fresh.map((it) => ({ sourceId: src.id, guid: it.guid, url: it.url, title: it.title, summary: it.summary, publishedAt: it.publishedAt, fetchedAt: now })))
+          .values(fresh.map((it) => ({ sourceId: src.id, guid: it.guid, url: it.url, title: it.title, summary: it.summary, imageUrl: it.imageUrl, publishedAt: it.publishedAt, fetchedAt: now })))
           .onConflictDoNothing({ target: [articles.sourceId, articles.guid] })
           .returning({ id: articles.id });
         summary.inserted += rows.length;

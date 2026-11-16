@@ -5,8 +5,8 @@ import { ingestDueSources } from '../../src/pipeline/ingest.ts';
 import { FeedFetcher } from '../../src/providers/feeds/fetch.ts';
 import { createSource, createUser, fakeFetch, NOW, publicLookup, setup, subscribe, type TestEnv } from './helpers.ts';
 
-const rss = (items: Array<{ guid: string; title: string; date: Date }>) => `<rss version="2.0"><channel><title>Feed</title>
-${items.map((i) => `<item><guid>${i.guid}</guid><title>${i.title}</title><pubDate>${i.date.toUTCString()}</pubDate><description>About ${i.title}</description></item>`).join('\n')}
+const rss = (items: Array<{ guid: string; title: string; date: Date; image?: string }>) => `<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/"><channel><title>Feed</title>
+${items.map((i) => `<item><guid>${i.guid}</guid><title>${i.title}</title><pubDate>${i.date.toUTCString()}</pubDate><description>About ${i.title}</description>${i.image ? `<media:content url="${i.image}" medium="image"/>` : ''}</item>`).join('\n')}
 </channel></rss>`;
 
 const min = (m: number) => new Date(NOW.getTime() + m * 60_000);
@@ -33,7 +33,7 @@ describe('ingestDueSources', () => {
     routes['https://a.example.com/feed'] = () =>
       new Response(
         rss([
-          { guid: '1', title: 'Fresh one', date: min(-30) },
+          { guid: '1', title: 'Fresh one', date: min(-30), image: 'https://cdn.example.com/one.jpg' },
           { guid: '2', title: 'Fresh two', date: min(-120) },
           { guid: '3', title: 'Too old', date: min(-49 * 60) },
         ]),
@@ -42,6 +42,11 @@ describe('ingestDueSources', () => {
 
     expect(await ingestDueSources(env.deps)).toEqual({ fetched: 1, failed: 0, inserted: 2 });
     expect(calls.map((c) => c.url)).toEqual(['https://a.example.com/feed']);
+    const stored = await env.db.select({ guid: articles.guid, imageUrl: articles.imageUrl }).from(articles).orderBy(articles.guid);
+    expect(stored).toEqual([
+      { guid: '1', imageUrl: 'https://cdn.example.com/one.jpg' },
+      { guid: '2', imageUrl: null },
+    ]);
     const [src] = await env.db.select().from(sources).where(eq(sources.id, subscribed.id));
     expect(src).toMatchObject({ etag: '"e1"', lastModified: 'Mon, 16 Nov 2026 08:00:00 GMT', failCount: 0, lastError: null });
     expect(src!.lastFetchedAt).toEqual(NOW);

@@ -1,14 +1,25 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router';
 import type { EditionDetailDto } from '@shared/contracts';
 import { api, ApiError, errorMessage } from '../lib/api';
-import { dateTime, dayHeading, editionMeta, editionTitle, hostOf, isInProgress, STATUS_TEXT } from '../lib/format';
+import { clock, dateTime, dayHeading, editionMeta, editionTitle, hostOf, spokenTextProps, titleTextProps, isInProgress, STATUS_TEXT } from '../lib/format';
 import { useMe } from '../state/auth';
 import { useEditions } from '../state/editions';
 import { usePlayer } from '../state/player';
 import { Icon } from '../components/Icon';
 import { EqBars } from '../components/Player';
-import { ErrorNote, Loading, Spinner } from '../components/ui';
+import { ErrorNote, Loading, Segmented, Spinner } from '../components/ui';
+
+const videoInProgress = (e: Pick<EditionDetailDto, 'videoStatus'>) => e.videoStatus === 'pending' || e.videoStatus === 'rendering';
+
+/** Story art comes from third-party feeds: hide it quietly if it fails to load. */
+function StoryThumb({ src }: { src: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return null;
+  return (
+    <img className="story-thumb" src={src} alt="" loading="lazy" decoding="async" referrerPolicy="no-referrer" onError={() => setFailed(true)} />
+  );
+}
 
 const STEPS = ['pending', 'scripting', 'synthesizing', 'ready'] as const;
 
@@ -36,6 +47,8 @@ export function EditionDetail() {
   const [ed, setEd] = useState<EditionDetailDto | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [retry, setRetry] = useState<{ busy: boolean; msg?: string; ok?: boolean }>({ busy: false });
+  const [mode, setMode] = useState<'listen' | 'watch'>('listen');
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   // Prefer the list's listened flag (it updates live while playing).
   const listed = editions?.find((e) => e.id === id);
@@ -51,12 +64,13 @@ export function EditionDetail() {
         setError(null);
         const { script: _s, error: _e, stories: _st, ...summary } = d;
         upsert(summary);
-        if (isInProgress(d)) timer = window.setTimeout(load, 3000);
+        if (isInProgress(d) || videoInProgress(d)) timer = window.setTimeout(load, isInProgress(d) ? 3000 : 5000);
       } catch (e) {
         if (!cancelled) setError(e);
       }
     };
     setEd(null);
+    setMode('listen');
     void load();
     return () => {
       cancelled = true;
@@ -94,6 +108,18 @@ export function EditionDetail() {
   const playing = current && p.playing;
   const listened = listed?.listened ?? ed.listened;
   const paragraphs = (ed.script ?? '').split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+  const watching = mode === 'watch' && !!ed.videoUrl;
+  const canJump = watching || (current && ed.status === 'ready');
+  const jumpTo = (t: number) => {
+    const v = videoRef.current;
+    if (watching && v) {
+      v.currentTime = t;
+      void v.play().catch(() => {});
+    } else if (current) {
+      p.seekTo(t);
+      if (!p.playing) p.play();
+    }
+  };
 
   return (
     <div className="page page-detail">
@@ -102,17 +128,61 @@ export function EditionDetail() {
         <p className="kicker">
           {dayHeading(ed.slotAt, me.timezone)} · {ed.trigger === 'on_demand' ? 'On demand' : 'Scheduled'}
         </p>
-        <h1 className="detail-title">{editionTitle(ed)}</h1>
+        <h1 className="detail-title" {...titleTextProps(ed)}>
+          {editionTitle(ed)}
+        </h1>
         <p className="detail-meta">
           {editionMeta(ed)}
           {ed.status === 'ready' && ` · ${listened ? 'Heard' : 'Not heard yet'}`}
         </p>
 
-        {ed.status === 'ready' && ed.audioUrl && (
-          <button type="button" className="btn btn-primary btn-play" onClick={() => (current ? p.toggle() : p.play(ed))}>
-            {playing ? <EqBars active /> : <Icon name="play" size={22} />}
-            {playing ? 'Pause' : current && p.time > 1 ? 'Resume' : 'Play bulletin'}
-          </button>
+        {ed.status === 'ready' && ed.videoUrl && (
+          <div className="detail-mode">
+            <Segmented
+              label="Listen or watch"
+              size="sm"
+              value={mode}
+              onChange={(m) => {
+                setMode(m);
+                if (m === 'watch') p.pause();
+                else videoRef.current?.pause();
+              }}
+              options={[
+                { value: 'listen', label: 'Listen' },
+                { value: 'watch', label: 'Watch' },
+              ]}
+            />
+          </div>
+        )}
+
+        {watching ? (
+          <video
+            ref={videoRef}
+            className="detail-video"
+            src={ed.videoUrl!}
+            controls
+            playsInline
+            preload="metadata"
+            // One thing plays at a time: the app-wide audio player yields to the video.
+            onPlay={() => p.pause()}
+          />
+        ) : (
+          ed.status === 'ready' &&
+          ed.audioUrl && (
+            <button type="button" className="btn btn-primary btn-play" onClick={() => (current ? p.toggle() : p.play(ed))}>
+              {playing ? <EqBars active /> : <Icon name="play" size={22} />}
+              {playing ? 'Pause' : current && p.time > 1 ? 'Resume' : 'Play bulletin'}
+            </button>
+          )
+        )}
+
+        {ed.status === 'ready' && videoInProgress(ed) && (
+          <p className="video-note muted" role="status">
+            <Spinner size={14} /> Video version on its way. You can listen now.
+          </p>
+        )}
+        {ed.status === 'ready' && ed.videoStatus === 'failed' && (
+          <p className="video-note muted">The video version couldn’t be made this time. The audio is unaffected.</p>
         )}
       </header>
 
@@ -158,25 +228,33 @@ export function EditionDetail() {
           </h2>
           <ol>
             {ed.stories.map((s, i) => (
-              <li key={`${s.title}-${i}`}>
+              <li key={`${s.title}-${i}`} className={s.imageUrl ? 'has-thumb' : undefined}>
                 <span className="story-n" aria-hidden="true">
                   {String(i + 1).padStart(2, '0')}
                 </span>
                 <div>
                   {s.url ? (
-                    <a href={s.url} target="_blank" rel="noopener noreferrer" className="story-title">
+                    <a href={s.url} target="_blank" rel="noopener noreferrer" className="story-title" dir="auto">
                       {s.title}
                       <Icon name="external" size={15} />
                       <span className="visually-hidden"> (opens in a new tab)</span>
                     </a>
                   ) : (
-                    <span className="story-title">{s.title}</span>
+                    <span className="story-title" dir="auto">
+                      {s.title}
+                    </span>
                   )}
                   <span className="story-meta">
                     {s.sourceTitle} · {dateTime(s.publishedAt, me.timezone)}
                     {s.url && ` · ${hostOf(s.url)}`}
                   </span>
+                  {canJump && s.startSeconds !== null && (
+                    <button type="button" className="story-jump" onClick={() => jumpTo(s.startSeconds!)}>
+                      <Icon name="play" size={12} /> {watching ? 'Watch' : 'Hear'} from {clock(s.startSeconds)}
+                    </button>
+                  )}
                 </div>
+                {s.imageUrl && <StoryThumb src={s.imageUrl} />}
               </li>
             ))}
           </ol>
@@ -188,7 +266,7 @@ export function EditionDetail() {
           <h2 id="transcript-h" className="section-title">
             Transcript
           </h2>
-          <article className="transcript">
+          <article className="transcript" {...spokenTextProps(ed)}>
             {paragraphs.map((t, i) => (
               <p key={i}>{t}</p>
             ))}

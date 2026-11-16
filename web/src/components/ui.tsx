@@ -126,14 +126,23 @@ export function Switch({
   onChange,
   label,
   description,
+  disabled,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
   description?: string;
+  disabled?: boolean;
 }) {
   return (
-    <button type="button" role="switch" aria-checked={checked} className="switch-row" onClick={() => onChange(!checked)}>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      className="switch-row"
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+    >
       <span className="switch-text">
         <span className="switch-label">{label}</span>
         {description && <span className="switch-desc">{description}</span>}

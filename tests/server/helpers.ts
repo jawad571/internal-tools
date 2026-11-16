@@ -4,24 +4,26 @@ import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach } from 'vitest';
 import { createTestDb, type Db, type DbHandle } from '../../src/db/client.ts';
 import { editions, sources, userSources } from '../../src/db/schema.ts';
+import { MockVideoRenderer } from '../../src/providers/video/mock.ts';
 import { createApp } from '../../src/server/app.ts';
 import { loadConfig } from '../../src/shared/config.ts';
 import type { VoiceDto } from '../../src/shared/contracts.ts';
-import { FeedProbeError, type BlobStore, type Deps, type FeedProber, type TtsProvider } from '../../src/shared/deps.ts';
+import { defaultVoiceFor, FeedProbeError, type BlobStore, type Deps, type FeedProber, type TtsProvider } from '../../src/shared/deps.ts';
 
 export const PUBLIC_URL = 'https://newscast.test';
 
 const VOICES: VoiceDto[] = [
-  { id: 'ava', name: 'Ava', description: 'Bright', gender: 'female' },
-  { id: 'max', name: 'Max', description: 'Deep', gender: 'male' },
+  { id: 'ava', name: 'Ava', description: 'Bright', gender: 'female', languages: ['en'] },
+  { id: 'max', name: 'Max', description: 'Deep', gender: 'male', languages: ['en'] },
+  { id: 'noor', name: 'Noor', description: 'Urdu', gender: 'female', languages: ['ur'] },
 ];
 
 export class FakeTts implements TtsProvider {
   readonly id = 'fake';
-  calls: Array<{ text: string; voiceId: string }> = [];
+  calls: Array<{ text: string; voiceId: string; language?: string }> = [];
   voices = () => VOICES;
-  defaultVoiceId = () => 'ava';
-  async synthesize(input: { text: string; voiceId: string }) {
+  defaultVoiceId = (language?: string) => defaultVoiceFor(VOICES, language);
+  async synthesize(input: { text: string; voiceId: string; language?: string }) {
     this.calls.push(input);
     return { audio: Buffer.from('FAKEAUDIO'), mime: 'audio/mpeg', durationSeconds: 1 };
   }
@@ -57,8 +59,9 @@ async function setup(db: Db) {
   const deps: Deps = {
     config: loadConfig({ NODE_ENV: 'test', PUBLIC_URL }),
     db,
-    scriptWriter: { write: async () => ({ title: 't', script: 's', usedArticleIds: [] }) },
+    scriptWriter: { write: async () => ({ title: 't', script: 's', segments: [{ articleId: null, text: 's' }], usedArticleIds: [] }) },
     tts: new FakeTts(),
+    video: new MockVideoRenderer(),
     blobs: new MemoryBlobs(),
     feeds: new FakeFeeds(),
     now: () => clock.now,

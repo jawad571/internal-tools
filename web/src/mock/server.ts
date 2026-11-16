@@ -8,6 +8,7 @@
  *   Listen screen can be seen populated.
  *   Feed URLs: anything without rss/feed/atom/xml in it → 422; containing "broken" → unhealthy.
  */
+import { SUPPORTED_LANGUAGES, isSupportedLanguage, urduHourLabel, voicesForLanguage } from '@shared/constants';
 import {
   AddSourceBody,
   GenerateNowBody,
@@ -27,10 +28,12 @@ import {
 } from '@shared/contracts';
 import { setTransport } from '../lib/api';
 import { currentHourIn, hourLabel } from '../lib/format';
-import { CATALOG, SCRIPT, STORY_POOL, TITLES, VOICES } from './data';
+import { CATALOG, SCRIPT, SCRIPT_UR, STORY_POOL, TITLES, TITLES_UR, VOICES } from './data';
 import { makeWav } from './wav';
+// Rendered by the real ffmpeg renderer (src/providers/video/ffmpeg.ts) at 640x360.
+import sampleVideo from './sample.mp4';
 
-type MockEdition = EditionDto & { createdAt: number; stories: number[]; failError?: string };
+type MockEdition = EditionDto & { createdAt: number; stories: number[]; failError?: string; wantsVideo?: boolean };
 type MockUser = {
   id: string;
   email: string;
@@ -48,7 +51,7 @@ type MockUser = {
 };
 type Db = { users: MockUser[]; session: string | null; v: 1 };
 
-const KEY = 'nc.mock.v1';
+const KEY = 'nc.mock.v3'; // v2: video + story images; v3: bulletin language
 const rid = () => crypto.randomUUID();
 const token = () => Array.from(crypto.getRandomValues(new Uint8Array(12)), (b) => b.toString(16).padStart(2, '0')).join('');
 
@@ -63,6 +66,8 @@ function defaultPrefs(plan: 'free' | 'pro'): PreferencesDto {
     activeHours: [...LIMITS.plans[plan].defaultActiveHours],
     extendedHours: [6, 21],
     paused: false,
+    videoBulletins: false,
+    videoAvailable: true,
   };
 }
 
@@ -108,11 +113,15 @@ function seedHistory(u: MockUser, now = Date.now()) {
       kind: p.kind,
       trigger: 'scheduled',
       status: p.status,
-      title: p.status === 'ready' ? TITLES[i % TITLES.length]! : null,
+      // One Urdu edition in the history, so the RTL title/transcript can be seen without switching.
+      language: i === 1 ? 'ur' : 'en',
+      title: p.status === 'ready' ? (i === 1 ? TITLES_UR[0]! : TITLES[i % TITLES.length]!) : null,
       durationSeconds: p.status === 'ready' ? durs[i % durs.length]! : null,
       audioUrl: null,
       listened: p.listened,
       storyCount: p.status === 'ready' ? (p.kind === 'extended' ? 9 : 5) : 0,
+      videoStatus: p.status === 'ready' && i < 3 ? 'ready' : 'none',
+      videoUrl: null,
       createdAt: slot.getTime() - 600_000,
       stories: pick(i, p.kind === 'extended' ? 9 : 5),
       failError: p.status === 'failed' ? 'The voice service timed out twice. This did not count towards your daily allowance.' : undefined,
@@ -181,8 +190,12 @@ function audioUrlFor(seconds: number): string {
 
 // ---- edition lifecycle ----
 function advance(e: MockEdition, u: MockUser) {
-  if (e.status !== 'pending' && e.status !== 'scripting' && e.status !== 'synthesizing') return;
   const t = Date.now() - e.createdAt;
+  // Video renders after the audio is ready, independently of it.
+  if (e.status === 'ready' && e.wantsVideo && (e.videoStatus === 'pending' || e.videoStatus === 'rendering')) {
+    e.videoStatus = t < 11000 ? 'pending' : t < 16000 ? 'rendering' : 'ready';
+  }
+  if (e.status !== 'pending' && e.status !== 'scripting' && e.status !== 'synthesizing') return;
   if (t < 2500) e.status = 'pending';
   else if (t < 5500) e.status = 'scripting';
   else if (t < 9000) e.status = 'synthesizing';
@@ -190,8 +203,9 @@ function advance(e: MockEdition, u: MockUser) {
     e.status = 'ready';
     const durs = DURATIONS[e.kind];
     e.durationSeconds = durs[u.editions.length % durs.length]!;
-    e.title = TITLES[(u.editions.length + 3) % TITLES.length]!;
+    e.title = e.language === 'ur' ? TITLES_UR[u.editions.length % TITLES_UR.length]! : TITLES[(u.editions.length + 3) % TITLES.length]!;
     e.storyCount = e.stories.length;
+    if (e.wantsVideo) e.videoStatus = 'pending';
   }
 }
 
@@ -203,28 +217,47 @@ function toDto(e: MockEdition): EditionDto {
     kind: e.kind,
     trigger: e.trigger,
     status: e.status,
+    language: e.language ?? 'en',
     title: e.title,
     durationSeconds: e.durationSeconds,
     audioUrl: e.status === 'ready' && e.durationSeconds ? audioUrlFor(e.durationSeconds) : null,
     listened: e.listened,
     storyCount: e.storyCount,
+    videoStatus: e.videoStatus ?? 'none',
+    videoUrl: e.status === 'ready' && e.videoStatus === 'ready' ? sampleVideo : null,
   };
+}
+
+/** Placeholder story art: an SVG data URL (no network), for every other story. */
+function storyImage(n: number): string | null {
+  if (n % 3 === 2) return null;
+  const hues = [210, 15, 160, 280, 45, 340];
+  const h = hues[n % hues.length]!;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 90"><defs><linearGradient id="g" x2="1" y2="1"><stop offset="0" stop-color="hsl(${h} 70% 45%)"/><stop offset="1" stop-color="hsl(${(h + 40) % 360} 70% 25%)"/></linearGradient></defs><rect width="160" height="90" fill="url(#g)"/><circle cx="${40 + (n * 23) % 80}" cy="45" r="28" fill="rgba(255,255,255,.18)"/></svg>`;
+  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
 function toDetail(e: MockEdition, u: MockUser): EditionDetailDto {
   const ready = e.status === 'ready';
   return {
     ...toDto(e),
-    script: ready ? SCRIPT(u.displayName, hourLabel(e.localHour).replace(/ /g, ' ')) : null,
+    script: ready
+      ? e.language === 'ur'
+        ? SCRIPT_UR(u.displayName, urduHourLabel(e.localHour))
+        : SCRIPT(u.displayName, hourLabel(e.localHour).replace(/ /g, ' '))
+      : null,
     error: e.failError ?? null,
     stories: ready
       ? e.stories.map((s, i) => {
           const src = CATALOG[(s + i) % CATALOG.length]!;
+          const per = ((e.durationSeconds ?? 0) - 20) / Math.max(1, e.stories.length);
           return {
             title: STORY_POOL[s]!,
             url: `${src.siteUrl}/news/${s + 100}`,
             sourceTitle: src.title,
             publishedAt: new Date(new Date(e.slotAt).getTime() - (i + 1) * 17 * 60_000).toISOString(),
+            imageUrl: storyImage(s),
+            startSeconds: Math.round(8 + i * per),
           };
         })
       : [],
@@ -392,7 +425,16 @@ async function handle(path: string, init: RequestInit): Promise<Response> {
   if (p === '/api/preferences' && method === 'PUT') {
     const r = parse(UpdatePreferencesBody, body);
     if (!r.ok) return r.res;
-    const next = { ...u.prefs, ...r.data };
+    if (r.data.language !== undefined && !isSupportedLanguage(r.data.language)) {
+      const options = SUPPORTED_LANGUAGES.map((l) => `${l.name} (${l.code})`).join(', ');
+      return fail(422, 'unsupported_language', `Bulletins can't be read in "${r.data.language}" yet. Choose one of: ${options}`);
+    }
+    const next = { ...u.prefs, ...r.data, videoAvailable: true };
+    // Same rule as the server: a language change without a voice moves to that language's first voice.
+    if (r.data.voiceId === undefined && r.data.language !== undefined && r.data.language !== u.prefs.language) {
+      const fits = VOICES.some((v) => v.id === next.voiceId && v.languages.includes(next.language));
+      if (!fits) next.voiceId = voicesForLanguage(VOICES, next.language)[0]?.id ?? next.voiceId;
+    }
     const max = LIMITS.plans[u.plan].maxActiveHours;
     if (next.activeHours.length > max)
       return fail(422, 'hour_limit', `Your plan includes up to ${max} bulletin hours a day.`);
@@ -440,11 +482,15 @@ async function handle(path: string, init: RequestInit): Promise<Response> {
       kind: r.data.kind,
       trigger: 'on_demand',
       status: 'pending',
+      language: u.prefs.language,
       title: null,
       durationSeconds: null,
       audioUrl: null,
       listened: false,
       storyCount: 0,
+      videoStatus: 'none',
+      videoUrl: null,
+      wantsVideo: u.prefs.videoBulletins,
       createdAt: Date.now(),
       stories: pick(u.editions.length + 1, r.data.kind === 'extended' ? 9 : 5),
     };

@@ -3,6 +3,7 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   pgTable,
   primaryKey,
   smallint,
@@ -11,6 +12,12 @@ import {
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core';
+
+export interface EditionSegment {
+  articleId: string | null;
+  start: number;
+  end: number;
+}
 
 const ts = (name: string) => timestamp(name, { withTimezone: true, mode: 'date' });
 
@@ -91,6 +98,8 @@ export const articles = pgTable(
     title: text('title').notNull(),
     /** Plain-text excerpt/body from the feed, tags stripped, capped at ~2000 chars. */
     summary: text('summary').notNull().default(''),
+    /** Lead image from the feed (Media RSS, enclosure, itunes:image or first <img>). Untrusted URL. */
+    imageUrl: text('image_url'),
     publishedAt: ts('published_at').notNull(),
     fetchedAt: ts('fetched_at').notNull().defaultNow(),
   },
@@ -120,6 +129,8 @@ export const preferences = pgTable('preferences', {
   /** Subset of activeHours that get the longer edition. */
   extendedHours: smallint('extended_hours').array().notNull().default(sql`'{6,21}'`),
   paused: boolean('paused').notNull().default(false),
+  /** Also render an MP4 of each bulletin (only when the server has VIDEO_ENABLED). */
+  videoBulletins: boolean('video_bulletins').notNull().default(false),
   updatedAt: ts('updated_at').notNull().defaultNow(),
 });
 
@@ -145,12 +156,30 @@ export const editions = pgTable(
     /** Snapshot of the prefs used, so later pref changes don't rewrite history. */
     voiceId: text('voice_id').notNull(),
     tone: text('tone').notNull(),
+    /** Spoken language (SUPPORTED_LANGUAGES code), snapshotted with the voice. */
+    language: text('language').notNull().default('en'),
+    /** In the spoken language. */
     title: text('title'),
+    /** English title for the video cards, when the spoken language isn't English. */
+    titleEn: text('title_en'),
     script: text('script'),
     audioKey: text('audio_key'),
     audioMime: text('audio_mime'),
     audioBytes: integer('audio_bytes'),
     durationSeconds: integer('duration_seconds'),
+    /**
+     * Spoken timeline: contiguous [start, end) seconds per script segment, covering the whole
+     * audio. articleId null = greeting / sign-off. Drives video visuals and story seeking.
+     */
+    segments: jsonb('segments').$type<EditionSegment[]>(),
+    /** Video is optional and independent of audio: a video failure never fails the edition. */
+    videoStatus: text('video_status', { enum: ['none', 'pending', 'rendering', 'ready', 'failed'] })
+      .notNull()
+      .default('none'),
+    videoKey: text('video_key'),
+    videoBytes: integer('video_bytes'),
+    videoError: text('video_error'),
+    videoClaimedAt: ts('video_claimed_at'),
     attempts: integer('attempts').notNull().default(0),
     error: text('error'),
     /** Set when a worker claims the row; stale claims are retried. */
@@ -162,6 +191,7 @@ export const editions = pgTable(
   (t) => [
     uniqueIndex('editions_user_slot_uq').on(t.userId, t.slotAt),
     index('editions_status_slot_idx').on(t.status, t.slotAt),
+    index('editions_video_status_idx').on(t.videoStatus),
   ],
 );
 

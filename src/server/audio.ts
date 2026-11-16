@@ -30,18 +30,31 @@ export function resolveRange(header: string | undefined, size: number): ByteRang
 /** Streams a ready edition's audio with full single-range support (Safari and podcast apps need it). */
 export async function serveEditionAudio(c: Context, deps: Deps, edition: Edition): Promise<Response> {
   if (edition.status !== 'ready' || !edition.audioKey) throw notFound('Audio not available');
-  const key = edition.audioKey;
+  return serveBlob(c, deps, { key: edition.audioKey, size: edition.audioBytes, mime: edition.audioMime ?? 'audio/mpeg', what: 'Audio' });
+}
 
-  let size = edition.audioBytes;
+/** Streams a ready edition's MP4 the same way (iOS Safari will not play video without Range). */
+export async function serveEditionVideo(c: Context, deps: Deps, edition: Edition): Promise<Response> {
+  if (edition.status !== 'ready' || edition.videoStatus !== 'ready' || !edition.videoKey) throw notFound('Video not available');
+  return serveBlob(c, deps, { key: edition.videoKey, size: edition.videoBytes, mime: 'video/mp4', what: 'Video' });
+}
+
+async function serveBlob(
+  c: Context,
+  deps: Deps,
+  blobRef: { key: string; size: number | null; mime: string; what: string },
+): Promise<Response> {
+  const { key, what } = blobRef;
+  let size = blobRef.size;
   if (size == null) {
     const probe = await deps.blobs.get(key);
-    if (!probe) throw notFound('Audio not available');
+    if (!probe) throw notFound(`${what} not available`);
     probe.stream.destroy();
     size = probe.size;
   }
 
   const headers = new Headers({
-    'Content-Type': edition.audioMime ?? 'audio/mpeg',
+    'Content-Type': blobRef.mime,
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'private, max-age=86400',
   });
@@ -59,6 +72,6 @@ export async function serveEditionAudio(c: Context, deps: Deps, edition: Edition
   if (c.req.method === 'HEAD') return new Response(null, { status, headers });
 
   const blob = await deps.blobs.get(key, range);
-  if (!blob) throw notFound('Audio not available');
+  if (!blob) throw notFound(`${what} not available`);
   return new Response(Readable.toWeb(blob.stream) as ReadableStream, { status, headers });
 }

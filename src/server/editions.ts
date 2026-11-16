@@ -1,11 +1,11 @@
 import { and, asc, count, desc, eq, gte, inArray, lt, ne, sql, type SQL } from 'drizzle-orm';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { articles, editionArticles, editions, sources, userSources, users, type Edition, type User } from '../db/schema.ts';
 import { GenerateNowBody, LIMITS, type EditionDetailDto, type EditionDto } from '../shared/contracts.ts';
 import type { Deps } from '../shared/deps.ts';
 import { localHourOf } from '../shared/time.ts';
-import { serveEditionAudio } from './audio.ts';
+import { serveEditionAudio, serveEditionVideo } from './audio.ts';
 import { requireUser, sessionUser, touchActivity } from './auth.ts';
 import { HttpError, notFound, readJson, uuidParam, type AppEnv } from './http.ts';
 import { loadPreferences } from './preferences.ts';
@@ -20,18 +20,25 @@ const ListQuery = z.object({
 
 const storyCount = sql<number>`(select count(*)::int from ${editionArticles} where ${editionArticles.editionId} = ${editions.id})`;
 
-export const toEditionDto = (e: Edition, stories: number): EditionDto => ({
+/** Pending/rendering rows left behind after VIDEO_ENABLED was switched off will never finish. */
+const videoStatusOf = (e: Edition, videoEnabled: boolean): EditionDto['videoStatus'] =>
+  !videoEnabled && (e.videoStatus === 'pending' || e.videoStatus === 'rendering') ? 'none' : e.videoStatus;
+
+export const toEditionDto = (e: Edition, stories: number, videoEnabled = true): EditionDto => ({
   id: e.id,
   slotAt: e.slotAt.toISOString(),
   localHour: e.localHour,
   kind: e.kind,
   trigger: e.trigger,
   status: e.status,
+  language: e.language,
   title: e.title,
   durationSeconds: e.durationSeconds,
   audioUrl: e.status === 'ready' ? `/api/editions/${e.id}/audio` : null,
   listened: e.listenedAt !== null,
   storyCount: stories,
+  videoStatus: videoStatusOf(e, videoEnabled),
+  videoUrl: e.status === 'ready' && e.videoStatus === 'ready' ? `/api/editions/${e.id}/video` : null,
 });
 
 export function editionRoutes(deps: Deps) {
@@ -61,7 +68,7 @@ export function editionRoutes(deps: Deps) {
       .where(and(...where))
       .orderBy(desc(editions.slotAt))
       .limit(q.data.limit);
-    return c.json({ editions: rows.map((r) => toEditionDto(r.edition, r.storyCount)) });
+    return c.json({ editions: rows.map((r) => toEditionDto(r.edition, r.storyCount, deps.config.VIDEO_ENABLED)) });
   });
 
   app.post('/generate', auth, async (c) => {
@@ -109,32 +116,41 @@ export function editionRoutes(deps: Deps) {
         targetSeconds: minutes * 60,
         voiceId: prefs.voiceId,
         tone: prefs.tone,
+        language: prefs.language,
       })
       .onConflictDoNothing()
       .returning();
     if (!edition) throw new HttpError(409, 'slot_taken', 'An edition for this moment already exists; try again');
-    return c.json({ edition: toEditionDto(edition, 0) }, 202);
+    return c.json({ edition: toEditionDto(edition, 0, deps.config.VIDEO_ENABLED) }, 202);
   });
 
   app.get('/:id', auth, async (c) => {
     const edition = await ownEdition(c.get('user').id, uuidParam(c));
     const stories = await db
       .select({
+        articleId: articles.id,
         title: articles.title,
         url: articles.url,
         sourceTitle: sources.title,
         publishedAt: articles.publishedAt,
+        imageUrl: articles.imageUrl,
       })
       .from(editionArticles)
       .innerJoin(articles, eq(articles.id, editionArticles.articleId))
       .innerJoin(sources, eq(sources.id, articles.sourceId))
       .where(eq(editionArticles.editionId, edition.id))
       .orderBy(asc(editionArticles.position));
+    const startOf = new Map<string, number>();
+    for (const seg of edition.segments ?? []) if (seg.articleId && !startOf.has(seg.articleId)) startOf.set(seg.articleId, seg.start);
     const detail: EditionDetailDto = {
-      ...toEditionDto(edition, stories.length),
+      ...toEditionDto(edition, stories.length, deps.config.VIDEO_ENABLED),
       script: edition.script,
       error: edition.error,
-      stories: stories.map((s) => ({ ...s, publishedAt: s.publishedAt.toISOString() })),
+      stories: stories.map(({ articleId, ...s }) => ({
+        ...s,
+        publishedAt: s.publishedAt.toISOString(),
+        startSeconds: startOf.get(articleId) ?? null,
+      })),
     };
     return c.json({ edition: detail });
   });
@@ -149,7 +165,8 @@ export function editionRoutes(deps: Deps) {
     return c.json({ ok: true as const });
   });
 
-  app.get('/:id/audio', async (c) => {
+  /** Cookie session (web app) or ?token=feedToken (podcast apps can't send cookies). */
+  const mediaRoute = (serve: typeof serveEditionAudio) => async (c: Context<AppEnv>) => {
     const id = uuidParam(c);
     const token = c.req.query('token');
     let user: User | null;
@@ -163,8 +180,10 @@ export function editionRoutes(deps: Deps) {
     }
     const edition = await ownEdition(user.id, id);
     await touchActivity(deps, user);
-    return serveEditionAudio(c, deps, edition);
-  });
+    return serve(c, deps, edition);
+  };
+  app.get('/:id/audio', mediaRoute(serveEditionAudio));
+  app.get('/:id/video', mediaRoute(serveEditionVideo));
 
   return app;
 }

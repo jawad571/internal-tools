@@ -25,7 +25,7 @@ describe('runOnce', () => {
     await subscribe(env.db, user.id, src.id);
 
     const first = await runOnce(env.deps);
-    expect(first).toEqual({ ingest: { fetched: 1, failed: 0, inserted: 3 }, scheduled: 1, outcomes: { ready: 1 } });
+    expect(first).toEqual({ ingest: { fetched: 1, failed: 0, inserted: 3 }, scheduled: 1, outcomes: { ready: 1 }, videos: {} });
     const [e] = await env.db.select().from(editions);
     expect(e!.status).toBe('ready');
     expect(env.blobs.objects.size).toBe(1);

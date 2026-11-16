@@ -19,7 +19,7 @@ export async function runRetention(deps: Deps): Promise<RetentionSummary> {
   let editionCount = 0;
   for (;;) {
     const old = await db
-      .select({ id: editions.id, audioKey: editions.audioKey })
+      .select({ id: editions.id, audioKey: editions.audioKey, videoKey: editions.videoKey })
       .from(editions)
       .where(lt(editions.slotAt, editionCutoff))
       .limit(BATCH);
@@ -29,9 +29,10 @@ export async function runRetention(deps: Deps): Promise<RetentionSummary> {
     for (const e of old) {
       try {
         if (e.audioKey) await deps.blobs.delete(e.audioKey);
+        if (e.videoKey) await deps.blobs.delete(e.videoKey);
         deletable.push(e.id);
       } catch (err) {
-        console.error('[retention] blob delete failed', e.audioKey, err);
+        console.error('[retention] blob delete failed', e.audioKey, e.videoKey, err);
       }
     }
     if (deletable.length) await db.delete(editions).where(inArray(editions.id, deletable));

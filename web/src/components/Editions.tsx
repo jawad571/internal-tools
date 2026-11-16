@@ -3,7 +3,17 @@ import { Link } from 'react-router';
 import { LIMITS } from '@shared/constants';
 import type { EditionDto } from '@shared/contracts';
 import { errorMessage, type EditionKind } from '../lib/api';
-import { STATUS_TEXT, dayHeading, dayKey, hourLabel, isInProgress, kindLabel, minutesLabel, editionTitle } from '../lib/format';
+import {
+  STATUS_TEXT,
+  dayHeading,
+  dayKey,
+  hourLabel,
+  isInProgress,
+  kindLabel,
+  minutesLabel,
+  editionTitle,
+  titleTextProps,
+} from '../lib/format';
 import { useMe } from '../state/auth';
 import { useEditions } from '../state/editions';
 import { usePlayer } from '../state/player';
@@ -54,7 +64,11 @@ function EditionRow({ e }: { e: EditionDto }) {
       <Link to={`/listen/${e.id}`} className="ed-main">
         <span className="ed-title">
           {unheard && <span className="new-badge">New</span>}
-          {e.status === 'ready' ? editionTitle(e) : `${hourLabel(e.localHour)} ${e.kind === 'extended' ? 'extended edition' : 'bulletin'}`}
+          {e.status === 'ready' ? (
+            <span {...titleTextProps(e)}>{editionTitle(e)}</span>
+          ) : (
+            `${hourLabel(e.localHour)} ${e.kind === 'extended' ? 'extended edition' : 'bulletin'}`
+          )}
         </span>
         <span className="ed-meta">
           <span className="visually-hidden">{hourLabel(e.localHour)}, </span>

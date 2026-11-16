@@ -21,6 +21,7 @@ export async function scheduleDueEditions(deps: Deps): Promise<number> {
       timezone: users.timezone,
       voiceId: preferences.voiceId,
       tone: preferences.tone,
+      language: preferences.language,
       standardMinutes: preferences.standardMinutes,
       extendedMinutes: preferences.extendedMinutes,
       activeHours: preferences.activeHours,
@@ -57,6 +58,7 @@ export async function scheduleDueEditions(deps: Deps): Promise<number> {
         targetSeconds: (extended ? u.extendedMinutes : u.standardMinutes) * 60,
         voiceId: u.voiceId,
         tone: u.tone,
+        language: u.language,
       },
     ];
   });

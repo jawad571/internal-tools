@@ -1,25 +1,30 @@
+import { SUPPORTED_LANGUAGES } from '../../shared/constants.ts';
 import type { VoiceDto } from '../../shared/contracts.ts';
 import type { SynthesisResult, TtsProvider } from '../../shared/deps.ts';
 import { assertOk, mapLimit, withRetry, type RetryOptions } from '../util.ts';
 import { chunkText } from './chunk.ts';
 import { concatMp3, mp3DurationSeconds } from './mp3.ts';
+import { estimateChunkAlignment, joinAlignments } from './timing.ts';
 import { deliveryInstructions } from './tone.ts';
 
 const ENDPOINT = 'https://api.openai.com/v1/audio/speech';
 /** The endpoint caps `input` at 4096 characters. */
 const MAX_CHARS = 4000;
 
+/** OpenAI voices speak whatever language the text is in, so every voice is offered for every language. */
+const ALL = SUPPORTED_LANGUAGES.map((l) => l.code);
+
 // Voices available on every OpenAI TTS model (tts-1, tts-1-hd, gpt-4o-mini-tts).
 const VOICES: VoiceDto[] = [
-  { id: 'alloy', name: 'Alloy', description: 'Balanced and versatile.', gender: 'neutral' },
-  { id: 'ash', name: 'Ash', description: 'Clear and direct.', gender: 'male' },
-  { id: 'coral', name: 'Coral', description: 'Warm and friendly.', gender: 'female' },
-  { id: 'echo', name: 'Echo', description: 'Smooth and resonant.', gender: 'male' },
-  { id: 'fable', name: 'Fable', description: 'Expressive, storyteller quality.', gender: 'neutral' },
-  { id: 'nova', name: 'Nova', description: 'Bright and energetic.', gender: 'female' },
-  { id: 'onyx', name: 'Onyx', description: 'Deep and authoritative.', gender: 'male' },
-  { id: 'sage', name: 'Sage', description: 'Calm and measured.', gender: 'female' },
-  { id: 'shimmer', name: 'Shimmer', description: 'Light and clear.', gender: 'female' },
+  { id: 'alloy', name: 'Alloy', description: 'Balanced and versatile.', gender: 'neutral', languages: ALL },
+  { id: 'ash', name: 'Ash', description: 'Clear and direct.', gender: 'male', languages: ALL },
+  { id: 'coral', name: 'Coral', description: 'Warm and friendly.', gender: 'female', languages: ALL },
+  { id: 'echo', name: 'Echo', description: 'Smooth and resonant.', gender: 'male', languages: ALL },
+  { id: 'fable', name: 'Fable', description: 'Expressive, storyteller quality.', gender: 'neutral', languages: ALL },
+  { id: 'nova', name: 'Nova', description: 'Bright and energetic.', gender: 'female', languages: ALL },
+  { id: 'onyx', name: 'Onyx', description: 'Deep and authoritative.', gender: 'male', languages: ALL },
+  { id: 'sage', name: 'Sage', description: 'Calm and measured.', gender: 'female', languages: ALL },
+  { id: 'shimmer', name: 'Shimmer', description: 'Light and clear.', gender: 'female', languages: ALL },
 ];
 
 export class OpenAiTts implements TtsProvider {
@@ -33,7 +38,7 @@ export class OpenAiTts implements TtsProvider {
     return VOICES;
   }
 
-  defaultVoiceId() {
+  defaultVoiceId(_language?: string) {
     return 'alloy';
   }
 
@@ -41,7 +46,8 @@ export class OpenAiTts implements TtsProvider {
     const doFetch = this.opts.fetch ?? fetch;
     // tts-1 / tts-1-hd ignore or reject `instructions`; the gpt-4o-*-tts models take them.
     const instructions = /^tts-1/.test(this.opts.model) ? undefined : deliveryInstructions(tone, toneNote);
-    const parts = await mapLimit(chunkText(text, MAX_CHARS), this.opts.concurrency ?? 3, (input) =>
+    const chunks = chunkText(text, MAX_CHARS);
+    const parts = await mapLimit(chunks, this.opts.concurrency ?? 3, (input) =>
       withRetry(async () => {
         const res = await doFetch(ENDPOINT, {
           method: 'POST',
@@ -53,6 +59,14 @@ export class OpenAiTts implements TtsProvider {
       }, this.opts.retry),
     );
     const audio = concatMp3(parts);
-    return { audio, mime: 'audio/mpeg', durationSeconds: mp3DurationSeconds(audio) };
+    // No timestamps from this API: estimate within each chunk, anchored on each chunk's measured length.
+    const alignment = joinAlignments(
+      parts.map((p, i) => {
+        const durationSeconds = mp3DurationSeconds(p);
+        return { durationSeconds, alignment: estimateChunkAlignment(chunks[i]!, durationSeconds) };
+      }),
+      false,
+    );
+    return { audio, mime: 'audio/mpeg', durationSeconds: mp3DurationSeconds(audio), alignment };
   }
 }

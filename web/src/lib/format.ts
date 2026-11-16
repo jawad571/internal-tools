@@ -1,3 +1,4 @@
+import { languageInfo } from '@shared/constants';
 import type { EditionDto } from '@shared/contracts';
 
 const hourFmtCache = new Map<string, Intl.DateTimeFormat>();
@@ -45,6 +46,19 @@ export function editionMeta(e: EditionDto): string {
 export function editionTitle(e: EditionDto): string {
   return e.title ?? `${hourLabel(e.localHour)} ${e.kind === 'extended' ? 'extended edition' : 'bulletin'}`;
 }
+
+/**
+ * lang/dir for text in the edition's spoken language (its title and script). Story headlines and
+ * the app's own labels are English and stay LTR. The fallback title is English too.
+ */
+export function spokenTextProps(e: Pick<EditionDto, 'language'>): { lang: string; dir: 'ltr' | 'rtl' } {
+  const info = languageInfo(e.language);
+  return { lang: info.code, dir: info.dir };
+}
+
+/** Props for editionTitle(e): spoken-language when the title came from the script writer. */
+export const titleTextProps = (e: Pick<EditionDto, 'language' | 'title'>) =>
+  e.title ? spokenTextProps(e) : { lang: 'en', dir: 'ltr' as const };
 
 export const STATUS_TEXT: Record<EditionDto['status'], string> = {
   pending: 'Queued',

@@ -1,6 +1,6 @@
 import { usePreferences } from '../state/data';
-import { LengthSliders, TonePicker, ToneNote, VoicePicker } from '../components/VoiceTone';
-import { ErrorNote, Loading, PageHeader, SaveIndicator, useSaveStatus } from '../components/ui';
+import { LanguagePicker, LengthSliders, TonePicker, ToneNote, VoicePicker } from '../components/VoiceTone';
+import { ErrorNote, Loading, PageHeader, SaveIndicator, Switch, useSaveStatus } from '../components/ui';
 
 export function Voice() {
   const prefs = usePreferences();
@@ -12,6 +12,15 @@ export function Voice() {
       {prefs.error && <ErrorNote error={prefs.error} onRetry={prefs.reload} />}
       {prefs.data && (
         <>
+          <section className="section" aria-labelledby="lang-h">
+            <div className="section-head">
+              <h2 id="lang-h" className="section-title">
+                Bulletin language
+              </h2>
+              <p className="section-sub">The language your bulletins are spoken in. Video headlines stay in English.</p>
+            </div>
+            <LanguagePicker prefs={prefs.data} run={run} />
+          </section>
           <section className="section" aria-labelledby="voice-h">
             <div className="section-head">
               <h2 id="voice-h" className="section-title">
@@ -42,6 +51,27 @@ export function Voice() {
             </div>
             <div className="card">
               <LengthSliders prefs={prefs.data} run={run} />
+            </div>
+          </section>
+          <section className="section" aria-labelledby="video-h">
+            <div className="section-head">
+              <h2 id="video-h" className="section-title">
+                Video
+              </h2>
+              <p className="section-sub">Watch instead of listen: the same bulletin over story pictures and headlines.</p>
+            </div>
+            <div className="card">
+              <Switch
+                label="Video bulletins"
+                description={
+                  prefs.data.videoAvailable
+                    ? 'Each bulletin also gets a video version, ready a few minutes after the audio.'
+                    : 'Video isn’t switched on for this Newscast server yet.'
+                }
+                checked={prefs.data.videoBulletins && prefs.data.videoAvailable}
+                disabled={!prefs.data.videoAvailable}
+                onChange={(v) => void run(() => prefs.save({ videoBulletins: v }))}
+              />
             </div>
           </section>
         </>

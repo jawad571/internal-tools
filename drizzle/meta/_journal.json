@@ -8,6 +8,20 @@
       "when": 1794827173165,
       "tag": "0000_public_juggernaut",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794834831720,
+      "tag": "0001_purple_scream",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794846578337,
+      "tag": "0002_concerned_triathlon",
+      "breakpoints": true
     }
   ]
 }

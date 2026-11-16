@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { LIMITS, TONES } from '@shared/constants';
+import { LIMITS, SUPPORTED_LANGUAGES, TONES, languageInfo, voicesForLanguage } from '@shared/constants';
 import type { PreferencesDto, ToneId } from '@shared/contracts';
 import { api, errorMessage } from '../lib/api';
 import { usePlayer } from '../state/player';
@@ -34,14 +34,14 @@ function usePreview() {
   }, [cleanup]);
 
   const start = useCallback(
-    async (voiceId: string, tone: ToneId, toneNote: string) => {
+    async (voiceId: string, tone: ToneId, toneNote: string, language: string) => {
       stop();
       player.pause();
       setError(null);
       const id = ++reqId.current;
       setState({ voiceId, phase: 'loading' });
       try {
-        const blob = await api.preview({ voiceId, tone, toneNote: toneNote.trim() || undefined });
+        const blob = await api.preview({ voiceId, tone, toneNote: toneNote.trim() || undefined, language });
         if (id !== reqId.current) return;
         url.current = URL.createObjectURL(blob);
         const a = new Audio(url.current);
@@ -62,56 +62,104 @@ function usePreview() {
   return { state, error, start, stop };
 }
 
+/** Spoken language of the bulletin. Changing it also moves to that language's first voice (server-side). */
+export function LanguagePicker({ prefs, run }: { prefs: PreferencesDto; run: Saver }) {
+  const { save } = usePreferences();
+  const name = useId();
+  return (
+    <div className="tone-grid lang-grid" role="radiogroup" aria-label="Bulletin language">
+      {SUPPORTED_LANGUAGES.map((l) => {
+        const selected = prefs.language === l.code;
+        return (
+          <label key={l.code} className={`tone-card${selected ? ' is-selected' : ''}`}>
+            <input
+              type="radio"
+              name={name}
+              value={l.code}
+              checked={selected}
+              onChange={() => void run(() => save({ language: l.code }))}
+              className="visually-hidden"
+            />
+            <span className="tone-label">
+              <span lang={l.code} dir={l.dir} className="lang-native">
+                {l.nativeName}
+              </span>
+              {selected && <Icon name="check" size={18} />}
+            </span>
+            {l.nativeName !== l.name && <span className="tone-blurb">{l.name}</span>}
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
 export function VoicePicker({ prefs, run }: { prefs: PreferencesDto; run: Saver }) {
   const voices = useVoices();
   const { save } = usePreferences();
   const preview = usePreview();
   const name = useId();
+  const [showAll, setShowAll] = useState(false);
   if (voices.loading) return <Loading label="Loading voices" />;
   if (voices.error) return <ErrorNote error={voices.error} onRetry={voices.reload} />;
+  const all = voices.data ?? [];
+  const matching = voicesForLanguage(all, prefs.language);
+  // A voice picked for another language (allowed, if unusual) stays visible so the selection is.
+  const shown = showAll || !matching.length ? all : all.filter((v) => matching.includes(v) || v.id === prefs.voiceId);
+  const langName = languageInfo(prefs.language).name;
   return (
-    <div className="voice-grid" role="radiogroup" aria-label="Voice">
-      {(voices.data ?? []).map((v) => {
-        const selected = prefs.voiceId === v.id;
-        const ps = preview.state?.voiceId === v.id ? preview.state.phase : null;
-        const err = preview.error?.voiceId === v.id ? preview.error.message : null;
-        return (
-          <div key={v.id} className={`voice-card${selected ? ' is-selected' : ''}`}>
-            <label className="voice-choose">
-              <input
-                type="radio"
-                name={name}
-                value={v.id}
-                checked={selected}
-                onChange={() => void run(() => save({ voiceId: v.id }))}
-                className="visually-hidden"
-              />
-              <span className="voice-radio" aria-hidden="true">
-                {selected && <Icon name="check" size={16} />}
-              </span>
-              <span className="voice-text">
-                <span className="voice-name">{v.name}</span>
-                <span className="voice-desc">{v.description}</span>
-              </span>
-            </label>
-            <button
-              type="button"
-              className="preview-btn"
-              onClick={() => (ps ? preview.stop() : void preview.start(v.id, prefs.tone, prefs.toneNote))}
-              aria-label={ps ? `Stop preview of ${v.name}` : `Preview ${v.name}`}
-            >
-              {ps === 'loading' ? <Spinner size={18} /> : <Icon name={ps === 'playing' ? 'stop' : 'play'} size={18} />}
-              <span>{ps === 'loading' ? 'Loading' : ps === 'playing' ? 'Stop' : 'Preview'}</span>
-            </button>
-            {err && (
-              <p className="field-error voice-error" role="alert">
-                <Icon name="alert" size={16} /> {err}
-              </p>
-            )}
-          </div>
-        );
-      })}
-    </div>
+    <>
+      <div className="voice-grid" role="radiogroup" aria-label="Voice">
+        {shown.map((v) => {
+          const selected = prefs.voiceId === v.id;
+          const ps = preview.state?.voiceId === v.id ? preview.state.phase : null;
+          const err = preview.error?.voiceId === v.id ? preview.error.message : null;
+          return (
+            <div key={v.id} className={`voice-card${selected ? ' is-selected' : ''}`}>
+              <label className="voice-choose">
+                <input
+                  type="radio"
+                  name={name}
+                  value={v.id}
+                  checked={selected}
+                  onChange={() => void run(() => save({ voiceId: v.id }))}
+                  className="visually-hidden"
+                />
+                <span className="voice-radio" aria-hidden="true">
+                  {selected && <Icon name="check" size={16} />}
+                </span>
+                <span className="voice-text">
+                  <span className="voice-name">{v.name}</span>
+                  <span className="voice-desc">
+                    {v.description}
+                    {!v.languages.includes(prefs.language) && ` Made for ${v.languages.map((c) => languageInfo(c).name).join(', ')}.`}
+                  </span>
+                </span>
+              </label>
+              <button
+                type="button"
+                className="preview-btn"
+                onClick={() => (ps ? preview.stop() : void preview.start(v.id, prefs.tone, prefs.toneNote, prefs.language))}
+                aria-label={ps ? `Stop preview of ${v.name}` : `Preview ${v.name}`}
+              >
+                {ps === 'loading' ? <Spinner size={18} /> : <Icon name={ps === 'playing' ? 'stop' : 'play'} size={18} />}
+                <span>{ps === 'loading' ? 'Loading' : ps === 'playing' ? 'Stop' : 'Preview'}</span>
+              </button>
+              {err && (
+                <p className="field-error voice-error" role="alert">
+                  <Icon name="alert" size={16} /> {err}
+                </p>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {matching.length > 0 && matching.length < all.length && (
+        <button type="button" className="link-btn voice-more" onClick={() => setShowAll((x) => !x)} aria-expanded={showAll}>
+          {showAll ? `Only show ${langName} voices` : `Show voices made for other languages`}
+        </button>
+      )}
+    </>
   );
 }
 

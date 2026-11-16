@@ -27,6 +27,26 @@ export interface FeedReader extends FeedProber {
   fetchFeed(url: string, opts?: FetchFeedOptions): Promise<FetchedFeed>;
 }
 
+export interface FetchedImage {
+  data: Buffer;
+  mime: 'image/jpeg' | 'image/png' | 'image/gif' | 'image/webp';
+}
+
+/** Image type from magic bytes; null for anything else (SVG, HTML error pages, truncated files…). */
+export function sniffImage(b: Buffer): FetchedImage['mime'] | null {
+  if (b.length < 12) return null;
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return 'image/jpeg';
+  if (b.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (b.toString('latin1', 0, 6) === 'GIF87a' || b.toString('latin1', 0, 6) === 'GIF89a') return 'image/gif';
+  if (b.toString('latin1', 0, 4) === 'RIFF' && b.toString('latin1', 8, 12) === 'WEBP') return 'image/webp';
+  return null;
+}
+
+/** What the video renderer needs to get story images. */
+export interface ImageSource {
+  fetchImage(url: string): Promise<FetchedImage>;
+}
+
 export const USER_AGENT = 'NewscastFeedFetcher/0.1 (+personal audio news bulletins; fetches each feed at most every few minutes)';
 const MAX_REDIRECTS = 5;
 
@@ -126,10 +146,10 @@ export class FeedFetcher implements FeedReader {
     return url;
   }
 
-  private async readCapped(res: Response): Promise<string> {
+  private async readCapped(res: Response, maxBytes: number, what: string): Promise<Buffer> {
     const declared = Number(res.headers.get('content-length'));
-    if (declared > this.maxBytes) throw new FeedProbeError('The feed is too large.');
-    if (!res.body) return '';
+    if (declared > maxBytes) throw new FeedProbeError(`The ${what} is too large.`);
+    if (!res.body) return Buffer.alloc(0);
     const reader = res.body.getReader();
     const parts: Uint8Array[] = [];
     let total = 0;
@@ -137,51 +157,85 @@ export class FeedFetcher implements FeedReader {
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
-      if (total > this.maxBytes) {
+      if (total > maxBytes) {
         await reader.cancel().catch(() => {});
-        throw new FeedProbeError('The feed is too large.');
+        throw new FeedProbeError(`The ${what} is too large.`);
       }
       parts.push(value);
     }
-    return Buffer.concat(parts).toString('utf8');
+    return Buffer.concat(parts);
+  }
+
+  /** GET with every hop (initial URL and each redirect) checked against the public-address policy. */
+  private async request(rawUrl: string, headers: Record<string, string>, signal: AbortSignal): Promise<{ url: URL; res: Response }> {
+    let url = await this.assertPublicUrl(rawUrl);
+    for (let hop = 0; ; hop++) {
+      const res = await this.fetchImpl(url.toString(), { headers: { 'user-agent': USER_AGENT, ...headers }, redirect: 'manual', signal });
+      const location = res.headers.get('location');
+      if (res.status >= 300 && res.status < 400 && res.status !== 304 && location) {
+        await res.body?.cancel().catch(() => {});
+        if (hop >= MAX_REDIRECTS) throw new FeedProbeError('Too many redirects.');
+        url = await this.assertPublicUrl(new URL(location, url).toString());
+        continue;
+      }
+      return { url, res };
+    }
+  }
+
+  private async guarded<T>(what: string, fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const signal = AbortSignal.timeout(this.timeoutMs);
+    try {
+      return await fn(signal);
+    } catch (e) {
+      if (e instanceof FeedProbeError) throw e;
+      if (signal.aborted) throw new FeedProbeError(`The ${what} took too long to respond.`);
+      throw new FeedProbeError(`Could not fetch the ${what} (${e instanceof Error ? e.message : String(e)}).`);
+    }
   }
 
   async fetchFeed(rawUrl: string, conditional: FetchFeedOptions = {}): Promise<FetchedFeed> {
-    const signal = AbortSignal.timeout(this.timeoutMs);
-    try {
-      let url = await this.assertPublicUrl(rawUrl);
-      for (let hop = 0; ; hop++) {
-        const headers: Record<string, string> = {
-          'user-agent': USER_AGENT,
-          accept: 'application/rss+xml, application/atom+xml, application/rdf+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5',
-        };
-        if (conditional.etag) headers['if-none-match'] = conditional.etag;
-        if (conditional.lastModified) headers['if-modified-since'] = conditional.lastModified;
-        const res = await this.fetchImpl(url.toString(), { headers, redirect: 'manual', signal });
-        const location = res.headers.get('location');
-        if (res.status >= 300 && res.status < 400 && res.status !== 304 && location) {
-          await res.body?.cancel().catch(() => {});
-          if (hop >= MAX_REDIRECTS) throw new FeedProbeError('Too many redirects.');
-          url = await this.assertPublicUrl(new URL(location, url).toString());
-          continue;
-        }
-        const meta = { url: url.toString(), etag: res.headers.get('etag'), lastModified: res.headers.get('last-modified') };
-        if (res.status === 304) {
-          await res.body?.cancel().catch(() => {});
-          return { ...meta, notModified: true, feed: null };
-        }
-        if (!res.ok) {
-          await res.body?.cancel().catch(() => {});
-          throw new FeedProbeError(`The feed server responded with HTTP ${res.status}.`);
-        }
-        const body = await this.readCapped(res);
-        return { ...meta, notModified: false, feed: parseFeed(body, conditional.now) };
+    return this.guarded('feed', async (signal) => {
+      const headers: Record<string, string> = {
+        accept: 'application/rss+xml, application/atom+xml, application/rdf+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5',
+      };
+      if (conditional.etag) headers['if-none-match'] = conditional.etag;
+      if (conditional.lastModified) headers['if-modified-since'] = conditional.lastModified;
+      const { url, res } = await this.request(rawUrl, headers, signal);
+      const meta = { url: url.toString(), etag: res.headers.get('etag'), lastModified: res.headers.get('last-modified') };
+      if (res.status === 304) {
+        await res.body?.cancel().catch(() => {});
+        return { ...meta, notModified: true, feed: null };
       }
-    } catch (e) {
-      if (e instanceof FeedProbeError) throw e;
-      if (signal.aborted) throw new FeedProbeError('The feed took too long to respond.');
-      throw new FeedProbeError(`Could not fetch the feed (${e instanceof Error ? e.message : String(e)}).`);
-    }
+      if (!res.ok) {
+        await res.body?.cancel().catch(() => {});
+        throw new FeedProbeError(`The feed server responded with HTTP ${res.status}.`);
+      }
+      const body = (await this.readCapped(res, this.maxBytes, 'feed')).toString('utf8');
+      return { ...meta, notModified: false, feed: parseFeed(body, conditional.now) };
+    });
+  }
+
+  /**
+   * Downloads a story image from an untrusted URL under the same address policy, time limit and a
+   * byte cap. Only JPEG/PNG/GIF/WebP are accepted, judged by magic bytes, not the Content-Type.
+   */
+  async fetchImage(rawUrl: string, maxBytes = 8 * 1024 * 1024): Promise<FetchedImage> {
+    return this.guarded('image', async (signal) => {
+      const { res } = await this.request(rawUrl, { accept: 'image/jpeg, image/png, image/webp, image/gif;q=0.8' }, signal);
+      if (!res.ok) {
+        await res.body?.cancel().catch(() => {});
+        throw new FeedProbeError(`The image server responded with HTTP ${res.status}.`);
+      }
+      const type = res.headers.get('content-type') ?? '';
+      if (type && !/^image\//i.test(type) && !/^application\/octet-stream/i.test(type)) {
+        await res.body?.cancel().catch(() => {});
+        throw new FeedProbeError(`Not an image (${type.slice(0, 50)}).`);
+      }
+      const data = await this.readCapped(res, maxBytes, 'image');
+      const mime = sniffImage(data);
+      if (!mime) throw new FeedProbeError('Not a supported image.');
+      return { data, mime };
+    });
   }
 
   async probe(url: string): Promise<ProbedFeed> {

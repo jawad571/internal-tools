@@ -63,12 +63,12 @@ describe('scheduleDueEditions', () => {
     expect([offHours.id, paused.id, idle.id, noSources.id]).not.toContain(rows[0]!.userId);
   });
 
-  it('snapshots the voice and tone at scheduling time', async () => {
+  it('snapshots the voice, tone and language at scheduling time', async () => {
     const u = await userWithSource();
-    await env.db.update(preferences).set({ voiceId: 'mock-dee', tone: 'formal' }).where(eq(preferences.userId, u.id));
+    await env.db.update(preferences).set({ voiceId: 'mock-zara', tone: 'formal', language: 'ur' }).where(eq(preferences.userId, u.id));
     await scheduleDueEditions(env.deps);
     const [e] = await env.db.select().from(editions);
-    expect(e).toMatchObject({ voiceId: 'mock-dee', tone: 'formal' });
+    expect(e).toMatchObject({ voiceId: 'mock-zara', tone: 'formal', language: 'ur' });
   });
 
   it('handles many users in a single pass', async () => {

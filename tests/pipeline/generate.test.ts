@@ -68,7 +68,12 @@ describe('generateEdition', () => {
   it('only records the article ids the writer actually used and that were supplied', async () => {
     const { user, arts } = await userWithNews(3);
     env.deps.scriptWriter = {
-      write: async () => ({ title: 'T', script: 'Hello there. News.', usedArticleIds: [arts[2]!.id, 'not-supplied', arts[2]!.id] }),
+      write: async () => ({
+        title: 'T',
+        script: 'Hello there. News.',
+        segments: [{ articleId: arts[2]!.id, text: 'Hello there. News.' }],
+        usedArticleIds: [arts[2]!.id, 'not-supplied', arts[2]!.id],
+      }),
     };
     const e = await pendingEdition(env, user.id);
     await generateEdition(env.deps, e.id);
@@ -108,10 +113,66 @@ describe('generateEdition', () => {
     const { user } = await userWithNews(1);
     const voices: string[] = [];
     const tts = env.deps.tts;
-    env.deps.tts = { ...tts, id: tts.id, voices: () => tts.voices(), defaultVoiceId: () => tts.defaultVoiceId(), synthesize: (i) => (voices.push(i.voiceId), tts.synthesize(i)) };
+    env.deps.tts = { ...tts, id: tts.id, voices: () => tts.voices(), defaultVoiceId: (l) => tts.defaultVoiceId(l), synthesize: (i) => (voices.push(i.voiceId), tts.synthesize(i)) };
     const e = await pendingEdition(env, user.id, { voiceId: 'retired-voice' });
     await generateEdition(env.deps, e.id);
     expect(voices).toEqual([tts.defaultVoiceId()]);
+    // An Urdu edition falls back to the first Urdu voice, never an English one.
+    const ur = await pendingEdition(env, user.id, { voiceId: 'retired-voice', language: 'ur', slotAt: new Date(SLOT.getTime() + 3600_000) });
+    const second = await createSource(env.db, { title: 'Second' });
+    await subscribe(env.db, user.id, second.id);
+    await addArticle(env.db, second.id, { title: 'Fresh unrelated story about tides', publishedAt: hoursAgo(0.2) });
+    expect(await generateEdition(env.deps, ur.id)).toBe('ready');
+    expect(voices.at(-1)).toBe('mock-zara');
+  });
+
+  it('writes an Urdu edition: Urdu label and budget, English title kept, language passed to TTS', async () => {
+    const { user } = await userWithNews(3);
+    const ttsCalls: Array<{ language?: string; voiceId: string }> = [];
+    const tts = env.deps.tts;
+    env.deps.tts = { ...tts, id: tts.id, voices: () => tts.voices(), defaultVoiceId: (l) => tts.defaultVoiceId(l), synthesize: (i) => (ttsCalls.push(i), tts.synthesize(i)) };
+    const e = await pendingEdition(env, user.id, { language: 'ur', voiceId: 'mock-omar' });
+
+    expect(await generateEdition(env.deps, e.id)).toBe('ready');
+    const req = requests[0]!;
+    // 2 minutes at Urdu's 160 words a minute.
+    expect(req).toMatchObject({ language: 'ur', targetWords: 320 });
+    expect(req.slotLabel).toBe('پیر، 16 نومبر، صبح 9 بجے');
+    expect(ttsCalls).toEqual([expect.objectContaining({ language: 'ur', voiceId: 'mock-omar' })]);
+
+    const done = await reload(env, e.id);
+    expect(done.language).toBe('ur');
+    expect(done.title).toBe('اس گھنٹے کی اہم خبریں');
+    expect(done.titleEn).toBe("This hour's top stories");
+    expect(done.script).toMatch(/^السلام علیکم Ada،/);
+    // Story segments still line up with the articles used.
+    expect(done.segments!.map((s) => s.articleId)).toEqual([null, ...(await new MockScriptWriter().write(req)).usedArticleIds, null]);
+  });
+
+  it('Urdu edition: keeps an explicitly chosen English voice; a vanished voice becomes the Urdu default', async () => {
+    const ttsCalls: Array<{ language?: string; voiceId: string }> = [];
+    const tts = env.deps.tts;
+    env.deps.tts = { ...tts, id: tts.id, voices: () => tts.voices(), defaultVoiceId: (l) => tts.defaultVoiceId(l), synthesize: (i) => (ttsCalls.push(i), tts.synthesize(i)) };
+
+    for (const voiceId of ['mock-ben', 'retired-voice']) {
+      const { user } = await userWithNews(2);
+      const e = await pendingEdition(env, user.id, { language: 'ur', voiceId });
+      expect(await generateEdition(env.deps, e.id)).toBe('ready');
+    }
+    expect(ttsCalls.map((c) => [c.voiceId, c.language])).toEqual([
+      ['mock-ben', 'ur'],
+      ['mock-zara', 'ur'],
+    ]);
+  });
+
+  it('never stores an English title for an English edition', async () => {
+    const { user } = await userWithNews(1);
+    env.deps.scriptWriter = {
+      write: async (r) => ({ ...(await new MockScriptWriter().write(r)), titleEn: 'Should be ignored' }),
+    };
+    const e = await pendingEdition(env, user.id);
+    await generateEdition(env.deps, e.id);
+    expect((await reload(env, e.id)).titleEn).toBeNull();
   });
 
   it('uses the extended word budget and kind', async () => {

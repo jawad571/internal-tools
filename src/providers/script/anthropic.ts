@@ -1,8 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import { z } from 'zod';
+import { hasArabicScript, languageInfo } from '../../shared/constants.ts';
 import { TONES } from '../../shared/contracts.ts';
-import type { ScriptRequest, ScriptResult, ScriptWriter } from '../../shared/deps.ts';
+import { joinSegments, type ScriptRequest, type ScriptResult, type ScriptSegment, type ScriptWriter } from '../../shared/deps.ts';
 
 /** Stable across every request (no per-listener content) so it is served from the prompt cache. */
 export const SYSTEM_PROMPT = `You are the scriptwriter for Newscast, a personalised audio news bulletin. Your script is read aloud by a text-to-speech voice, so you write for the ear, not the page.
@@ -32,8 +33,20 @@ export const SYSTEM_PROMPT = `You are the scriptwriter for Newscast, a personali
 - End with a short, friendly sign-off of one or two sentences.
 
 # Length and language
-- Hit the requested word budget within plus or minus ten percent. The budget is for the script only.
-- Write the whole script, including greeting and sign-off, in the requested language. Keep source names as given.
+- Hit the requested word budget within plus or minus ten percent. The budget is for the script only, counted in words of the requested language.
+- Write the whole script, including greeting and sign-off, in the requested language. In English, keep source names exactly as given; in other languages, say them the way that language's broadcasters do (see the language notes below).
+- The stories and <previously_covered> headlines are usually in English whatever the requested language. Translate their facts faithfully; translating never licenses adding, softening or sharpening a fact. Match a previously covered headline by meaning, not wording.
+
+# Urdu (language code "ur")
+When the requested language is Urdu:
+- Write natural spoken Urdu in Urdu (Perso-Arabic) script, the way a Pakistani radio or television newsreader would read it (think Radio Pakistan or BBC Urdu): standard, clear Urdu that listeners in Pakistan and India both follow. Never Roman Urdu, never Hindi in Devanagari.
+- Prefer everyday Urdu words over heavily Persianised or Arabicised ones, and over English where a common Urdu word exists (حکومت, not گورنمنٹ). English loanwords that Urdu speakers really use are fine, written in Urdu script (انٹرنیٹ, ٹیکنالوجی, فٹ بال).
+- Use Urdu punctuation: ۔ for full stops, ، for commas, ؟ for questions. No Latin punctuation, no quotation marks.
+- Spell numbers out as Urdu words so they are read correctly, and use the South Asian scale: lakh and crore, not million (two point four million = چوبیس لاکھ; one billion = ایک ارب; forty-two percent = بیالیس فیصد; years like دو ہزار چھبیس). Round where precision does not matter. Dates as spoken: بیس مارچ.
+- Write names of people, places, organisations and news sources in Urdu script as Urdu broadcasters say them (بی بی سی, رائٹرز, دی گارڈین, ایمیزون). Keep a name in Latin letters only if it has no sensible Urdu rendering.
+- Attribute naturally: "بی بی سی کے مطابق", "رائٹرز کی خبر ہے کہ". Transitions like "اب چلتے ہیں کاروبار کی خبروں کی طرف" and "اور آخر میں".
+- Greet with "السلام علیکم" or "آداب" plus the listener's name (in Urdu script if it is a name with a common Urdu spelling, otherwise as given), and use the slot label (it is already in Urdu; say its numbers as words like everything else, e.g. سولہ نومبر، شام چھ بجے). Sign off in the same register: "اپنا خیال رکھیے، اللہ حافظ".
+- The tones still apply: a warm or witty Urdu bulletin is warm or witty the way an Urdu presenter would be, never slangy.
 
 # Tones
 Apply the requested tone to word choice and structure:
@@ -43,19 +56,24 @@ Every tone stays accurate and respectful. Humour is never at the expense of vict
 # Output
 Return:
 - title: a short headline-style title for this edition (under 80 characters, in the requested language, no date).
-- script: the full spoken script.
-- usedArticleIds: the ids of the stories you actually covered, in the order you covered them, exactly as given in the story id attributes.`;
+- title_en: the same title in English, written in Latin letters (under 80 characters, no date). It is shown on screen to viewers, so it must be English even when the script is not. If the requested language is English, repeat the title.
+- segments: the full spoken script split into consecutive passages, in spoken order. Each passage has:
+  - story: the id of the one story the passage is about, exactly as given in the story id attributes, or "none" for the greeting, the sign-off and any passage not about a single story.
+  - text: the spoken words of that passage. A story's transition sentence belongs to that story's passage.
+  Start a new passage whenever the bulletin moves to a different story. Each story normally gets exactly one passage. Read in order, the passages' text must be the complete script, nothing more.`;
 
 const Output = z.object({
   title: z.string(),
-  script: z.string(),
-  usedArticleIds: z.array(z.string()),
+  title_en: z.string(),
+  segments: z.array(z.object({ story: z.string(), text: z.string() })),
 });
 
 const Validated = z.object({
   title: z.string().trim().min(1).max(200),
-  script: z.string().trim().min(1),
-  usedArticleIds: z.array(z.string()),
+  title_en: z.string().trim().max(200).optional(),
+  segments: z
+    .array(z.object({ story: z.string(), text: z.string() }))
+    .refine((segs) => segs.some((s) => s.text.trim()), 'script is empty'),
 });
 
 /** Keeps untrusted text from closing our delimiters. */
@@ -80,7 +98,7 @@ export function buildUserMessage(req: ScriptRequest, refs: string[]): string {
     `- Slot label: ${req.slotLabel}`,
     `- Edition: ${req.kind}`,
     `- Word budget: ${req.targetWords} words (acceptable range ${Math.round(req.targetWords * 0.9)}-${Math.round(req.targetWords * 1.1)})`,
-    `- Language: ${req.language}`,
+    `- Language: ${req.language} (${languageInfo(req.language).name})`,
     `- Tone: ${tone.id} (${tone.blurb})`,
     '',
     `<listener_style_note>${note}</listener_style_note>`,
@@ -125,8 +143,25 @@ export class AnthropicScriptWriter implements ScriptWriter {
     const out = Validated.parse(res.parsed_output);
     const byRef = new Map(refs.map((r, i) => [r, req.stories[i]!.articleId]));
     const supplied = new Set(req.stories.map((s) => s.articleId));
-    // Accept refs or (if the model echoed them) real ids; drop anything not supplied, de-duplicate.
-    const used = [...new Set(out.usedArticleIds.map((id) => byRef.get(id.trim()) ?? id.trim()).filter((id) => supplied.has(id)))];
-    return { title: out.title.trim(), script: out.script.trim(), usedArticleIds: used };
+    // Accept refs or (if the model echoed them) real ids; anything else (incl. "none") is a link passage.
+    const resolve = (ref: string) => {
+      const id = byRef.get(ref.trim()) ?? ref.trim();
+      return supplied.has(id) ? id : null;
+    };
+    const segments: ScriptSegment[] = [];
+    for (const seg of out.segments) {
+      const text = seg.text.trim();
+      if (!text) continue;
+      const articleId = resolve(seg.story);
+      const prev = segments.at(-1);
+      // Consecutive passages about the same story are one segment on screen.
+      if (prev && prev.articleId === articleId) prev.text = `${prev.text}\n\n${text}`;
+      else segments.push({ articleId, text });
+    }
+    const used = [...new Set(segments.flatMap((s) => (s.articleId ? [s.articleId] : [])))];
+    const title = out.title.trim();
+    // Only kept when it is usable as on-screen English text; the video falls back to a generic English label.
+    const titleEn = req.language !== 'en' && out.title_en && !hasArabicScript(out.title_en) ? out.title_en.trim() : undefined;
+    return { title, ...(titleEn ? { titleEn } : {}), script: joinSegments(segments), segments, usedArticleIds: used };
   }
 }

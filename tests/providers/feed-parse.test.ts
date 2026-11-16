@@ -124,3 +124,82 @@ describe('parseFeed', () => {
     expect(htmlToText(`<p>${'word '.repeat(1000)}</p>`).length).toBeLessThanOrEqual(SUMMARY_MAX);
   });
 });
+
+describe('story images', () => {
+  const rss = (items: string) => `<?xml version="1.0"?>
+<rss version="2.0" xmlns:media="http://search.yahoo.com/mrss/" xmlns:content="http://purl.org/rss/1.0/modules/content/"
+     xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+<channel><title>Img</title><link>https://img.example/</link>${items}</channel></rss>`;
+  const images = (xml: string) => parseFeed(xml, FETCHED)!.items.map((i) => i.imageUrl);
+
+  it('prefers the largest Media RSS image, including inside media:group', () => {
+    expect(
+      images(
+        rss(`
+      <item><title>a</title><link>https://img.example/a</link>
+        <media:thumbnail url="https://cdn.example/a-thumb.jpg" width="144" height="81"/>
+        <media:content url="https://cdn.example/a-small.jpg" medium="image" width="320" height="180"/>
+        <media:content url="https://cdn.example/a-large.jpg" medium="image" width="1600" height="900"/>
+        <media:content url="https://cdn.example/a.mp4" medium="video" width="3840" height="2160"/>
+      </item>
+      <item><title>b</title>
+        <media:group>
+          <media:content url="https://cdn.example/b-640.jpg" type="image/jpeg" width="640" height="360"/>
+          <media:content url="https://cdn.example/b-1280.jpg" type="image/jpeg" width="1280" height="720"/>
+        </media:group>
+      </item>
+      <item><title>c</title>
+        <media:thumbnail url="https://cdn.example/c-thumb.jpg" width="150" height="150"/>
+        <media:content url="https://cdn.example/c-full.jpg"/>
+      </item>`),
+      ),
+    ).toEqual(['https://cdn.example/a-large.jpg', 'https://cdn.example/b-1280.jpg', 'https://cdn.example/c-full.jpg']);
+  });
+
+  it('falls back to image enclosures, itunes:image, then the first <img> in the body', () => {
+    expect(
+      images(
+        rss(`
+      <item><title>enclosure</title>
+        <enclosure url="https://cdn.example/audio.mp3" type="audio/mpeg" length="1"/>
+        <enclosure url="https://cdn.example/pic.png" type="image/png" length="1"/>
+      </item>
+      <item><title>itunes</title><itunes:image href="https://cdn.example/cover.jpg"/></item>
+      <item><title>html</title><link>https://site.example/news/story</link>
+        <description><![CDATA[<img src="https://track.example/p.gif" width="1" height="1"><p>Hi <img alt="x" src='/img/lead.jpg?w=800&amp;h=450'></p>]]></description>
+      </item>
+      <item><title>escaped html</title>
+        <description>&lt;p&gt;&lt;img src="https://cdn.example/esc.jpg"&gt;&lt;/p&gt;</description>
+      </item>
+      <item><title>none</title><description>No pictures.</description></item>`),
+      ),
+    ).toEqual([
+      'https://cdn.example/pic.png',
+      'https://cdn.example/cover.jpg',
+      'https://site.example/img/lead.jpg?w=800&h=450',
+      'https://cdn.example/esc.jpg',
+      null,
+    ]);
+  });
+
+  it('rejects non-http(s) and data URLs', () => {
+    expect(
+      images(
+        rss(`
+      <item><title>a</title><media:content url="javascript:alert(1)" medium="image"/>
+        <description><![CDATA[<img src="data:image/png;base64,AAAA"><img src="ftp://x.example/a.jpg">]]></description></item>
+      <item><title>b</title><media:content url="file:///etc/passwd" medium="image"/><itunes:image href="https://cdn.example/ok.jpg"/></item>`),
+      ),
+    ).toEqual([null, 'https://cdn.example/ok.jpg']);
+  });
+
+  it('reads Atom image enclosures and xhtml content images', () => {
+    const atom = `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><title>A</title>
+      <entry><title>one</title><id>1</id><link rel="alternate" href="https://atom.example/1"/>
+        <link rel="enclosure" type="image/jpeg" href="https://atom.example/1.jpg"/></entry>
+      <entry><title>two</title><id>2</id><link rel="alternate" href="https://atom.example/2"/>
+        <content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml"><p>Text</p><img src="pics/2.webp"/></div></content></entry>
+    </feed>`;
+    expect(images(atom)).toEqual(['https://atom.example/1.jpg', 'https://atom.example/pics/2.webp']);
+  });
+});

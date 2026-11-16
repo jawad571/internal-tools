@@ -34,6 +34,14 @@ const Env = z.object({
   S3_REGION: z.string().optional(),
   S3_ENDPOINT: z.string().optional(),
 
+  // --- video bulletins ---
+  /** Render an MP4 (audio over story images, lower third and ticker) for users who opt in. */
+  VIDEO_ENABLED: bool.default(false),
+  /** ffmpeg renders run at once per worker process (each uses several cores). */
+  VIDEO_CONCURRENCY: z.coerce.number().int().min(1).default(1),
+  /** Override the bundled ffmpeg-static binary. */
+  FFMPEG_PATH: z.string().optional(),
+
   // --- pipeline tuning ---
   /** Re-fetch a subscribed feed when it is older than this. */
   INGEST_STALE_MINUTES: z.coerce.number().default(15),
@@ -45,7 +53,7 @@ const Env = z.object({
   IDLE_PAUSE_DAYS: z.coerce.number().default(7),
   /** Audio older than this is deleted. */
   RETENTION_DAYS: z.coerce.number().default(7),
-  /** Spoken words per minute used to turn a target duration into a word budget. */
+  /** English spoken words per minute for the word budget; other languages scale from it (SUPPORTED_LANGUAGES). */
   WORDS_PER_MINUTE: z.coerce.number().default(150),
 });
 

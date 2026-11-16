@@ -26,9 +26,12 @@ describe('preferences', () => {
       activeHours: [6, 9, 12, 15, 18, 21],
       extendedHours: [6, 21],
       paused: false,
+      videoBulletins: false,
+      videoAvailable: false,
     });
     const { voices } = await (await ctx.call('GET', '/api/voices', { cookie })).json();
-    expect(voices.map((v: { id: string }) => v.id)).toEqual(['ava', 'max']);
+    expect(voices.map((v: { id: string }) => v.id)).toEqual(['ava', 'max', 'noor']);
+    expect(voices[2]).toMatchObject({ id: 'noor', languages: ['ur'] });
   });
 
   it('updates fields and normalises hours', async () => {
@@ -41,6 +44,14 @@ describe('preferences', () => {
       activeHours: [7, 8, 21],
       extendedHours: [21],
     });
+  });
+
+  it('toggles video bulletins; videoAvailable is read-only', async () => {
+    const res = await put({ videoBulletins: true });
+    expect((await res.json()).preferences).toMatchObject({ videoBulletins: true, videoAvailable: false });
+    expect((await put({ videoAvailable: true })).status).toBe(200); // unknown keys are stripped
+    const { preferences } = await (await ctx.call('GET', '/api/preferences', { cookie })).json();
+    expect(preferences).toMatchObject({ videoBulletins: true, videoAvailable: false });
   });
 
   it('rejects an unknown voice', async () => {
@@ -94,5 +105,57 @@ describe('preferences', () => {
       last = (await ctx.call('POST', '/api/preferences/preview', { cookie, body: { voiceId: 'ava', tone: 'calm' } })).status;
     }
     expect(last).toBe(429);
+  });
+
+  describe('bulletin language', () => {
+    it('switching to Urdu moves an English voice to the first Urdu voice, and back again', async () => {
+      const res = await put({ language: 'ur' });
+      expect(res.status).toBe(200);
+      expect((await res.json()).preferences).toMatchObject({ language: 'ur', voiceId: 'noor' });
+      expect((await (await put({ language: 'en' })).json()).preferences).toMatchObject({ language: 'en', voiceId: 'ava' });
+    });
+
+    it('keeps a voice chosen in the same request, even one meant for another language', async () => {
+      const res = await put({ language: 'ur', voiceId: 'max' });
+      expect((await res.json()).preferences).toMatchObject({ language: 'ur', voiceId: 'max' });
+      // Unrelated updates later don't override the explicit choice.
+      expect((await (await put({ tone: 'calm' })).json()).preferences).toMatchObject({ language: 'ur', voiceId: 'max' });
+    });
+
+    it('keeps the current voice when it is meant for the new language', async () => {
+      await put({ language: 'ur' });
+      await put({ voiceId: 'noor' });
+      expect((await (await put({ language: 'ur' })).json()).preferences.voiceId).toBe('noor');
+    });
+
+    it('rejects unsupported languages with 422 and a clear message', async () => {
+      const res = await put({ language: 'fr' });
+      expect(res.status).toBe(422);
+      const { error } = await res.json();
+      expect(error.code).toBe('unsupported_language');
+      expect(error.message).toContain('"fr"');
+      expect(error.message).toContain('English (en), Urdu (ur)');
+      expect((await put({ language: 'Urdu' })).status).toBe(400); // not a language code at all
+      const { preferences } = await (await ctx.call('GET', '/api/preferences', { cookie })).json();
+      expect(preferences.language).toBe('en');
+    });
+
+    it('preview reads the sample in the requested, else the bulletin, language', async () => {
+      const tts = ctx.deps.tts as FakeTts;
+      await ctx.call('POST', '/api/preferences/preview', { cookie, body: { voiceId: 'noor', tone: 'warm', language: 'ur' } });
+      expect(tts.calls.at(-1)).toMatchObject({ voiceId: 'noor', language: 'ur' });
+      expect(tts.calls.at(-1)!.text).toMatch(/[\u0600-\u06FF]/);
+
+      await ctx.call('POST', '/api/preferences/preview', { cookie, body: { voiceId: 'ava', tone: 'warm' } });
+      expect(tts.calls.at(-1)).toMatchObject({ language: 'en' });
+      expect(tts.calls.at(-1)!.text).toMatch(/^Hello/);
+
+      await put({ language: 'ur' });
+      await ctx.call('POST', '/api/preferences/preview', { cookie, body: { voiceId: 'noor', tone: 'calm' } });
+      expect(tts.calls.at(-1)).toMatchObject({ language: 'ur' });
+
+      const bad = await ctx.call('POST', '/api/preferences/preview', { cookie, body: { voiceId: 'noor', tone: 'calm', language: 'de' } });
+      expect(bad.status).toBe(422);
+    });
   });
 });

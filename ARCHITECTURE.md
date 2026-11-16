@@ -11,9 +11,10 @@ One TypeScript codebase, one Postgres database, two roles (`ROLE=web|worker|all`
 ```
             ┌────────── web (Hono) ──────────┐        ┌──────────── worker ────────────┐
  browser ──▶│ /api/*  auth, sources, prefs,  │        │ ingest loop   feeds → articles │
- podcast ──▶│         editions, audio(Range) │        │ scheduler     due slots → rows │
-   apps     │ /feed/:token.xml  private RSS  │        │ generator     row → script →   │
-            │ static SPA (web/dist)          │        │               audio → ready    │
+ podcast ──▶│         editions, audio/video  │        │ scheduler     due slots → rows │
+   apps     │         (Range)                │        │ generator     row → script →   │
+            │ /feed/:token.xml  private RSS  │        │               audio → ready    │
+            │ static SPA (web/dist)          │        │ video queue   ready → MP4      │
             └──────────────┬─────────────────┘        └───────────────┬────────────────┘
                            └──────────── Postgres + blob store ───────┘
 ```
@@ -24,7 +25,8 @@ One TypeScript codebase, one Postgres database, two roles (`ROLE=web|worker|all`
 - `src/server/` — HTTP API. Depends only on the `Deps` ports.
 - `src/pipeline/` — ingest, story selection, scheduler, edition generator, worker loop.
 - `src/providers/` — implementations of the ports: Anthropic script writer, OpenAI / ElevenLabs
-  TTS, local / S3 blob store, feed fetcher; each with a mock so everything runs with no API keys.
+  TTS, ffmpeg video renderer, local / S3 blob store, feed fetcher; each with a mock so everything
+  runs with no API keys.
 - `web/` — Vite + React PWA.
 
 ## Decisions that matter
@@ -49,3 +51,31 @@ One TypeScript codebase, one Postgres database, two roles (`ROLE=web|worker|all`
    supports it, in delivery instructions.
 8. **User-supplied feed URLs are untrusted**: http(s) only, private/loopback addresses refused,
    size and time capped.
+9. **Video is a best-effort second output.** The script writer returns per-story segments; TTS
+   returns character timings (ElevenLabs `with-timestamps`; OpenAI and mock estimate within each
+   chunk, anchored on each chunk's measured length). `pipeline/timeline.ts` turns those into a
+   contiguous `editions.segments` timeline (story start/end seconds), stored with the audio.
+   When `VIDEO_ENABLED` and the user opted in, the edition is marked `video_status = pending`
+   once the audio is ready; a separate worker queue (same SKIP LOCKED pattern) renders it with
+   ffmpeg-static: each story's feed image with a Ken Burns move (or a title card), a lower third
+   for the current story, a ticker of the others, intro/outro cards. All text goes through
+   drawtext `textfile=` with expansion off, so headlines never touch the filtergraph. A failed or
+   abandoned render only sets `video_status = failed`; the audio edition is never affected.
+   Story images are untrusted URLs fetched under the same rules as feeds (decision 8), sniffed
+   by magic bytes and re-encoded; any failure falls back to a title card.
+10. **Spoken language is per user; on-screen text is always English.** `SUPPORTED_LANGUAGES`
+   (`shared/constants.ts`, shared with the web app) lists en and ur; adding a language is one
+   line there plus voices for it. The language is snapshotted on the edition with the voice.
+   The script writer translates the (usually English) stories into the spoken language and also
+   returns an English title (`titleEn`); the video uses that, the feed headlines and an English
+   slot label, never the script, because drawtext can't shape Urdu. No English title → a generic
+   "Newscast · Monday 16 November, 6 PM" card. Each language has its own speaking rate for the
+   word budget (Urdu 160 vs English 150 wpm, scaled by `WORDS_PER_MINUTE`). Voices declare the
+   languages they are for: changing language without picking a voice moves to that language's
+   first voice, a voice sent with the change is kept (an explicit choice), and generation only
+   substitutes a voice the provider no longer has, with the language's default. ElevenLabs gets
+   `language_code` on models that take it (v3/v4, flash/turbo v2.5; not multilingual_v2). Its
+   Urdu voices are Voice Library voices used by id; if the API refuses one, it is added to the
+   account once (`POST /v1/voices/add/…`) and the request retried. Timeline matching counts base
+   characters only (no whitespace, combining marks or zero-width joiners, after NFKD), so Urdu
+   alignment lines up however the provider splits diacritics.

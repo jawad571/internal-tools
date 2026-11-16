@@ -1,4 +1,5 @@
 import { DateTime, IANAZone } from 'luxon';
+import { urduHourLabel } from './constants.ts';
 
 export const isValidTimezone = (tz: string) => IANAZone.isValidZone(tz);
 
@@ -18,6 +19,19 @@ export function nextSlot(now: Date, tz: string): Slot {
 /** Local hour (0-23) of an instant in `tz`. */
 export const localHourOf = (at: Date, tz: string) => DateTime.fromJSDate(at, { zone: tz }).hour;
 
-/** e.g. "Monday 16 November, 6 AM" — handed to the script writer for the greeting. */
-export const spokenSlotLabel = (at: Date, tz: string, locale = 'en') =>
-  DateTime.fromJSDate(at, { zone: tz }).setLocale(locale).toFormat("cccc d LLLL, h a");
+/**
+ * e.g. "Monday 16 November, 6 AM" — handed to the script writer for the greeting, so it is
+ * phrased in the spoken language. Urdu: "پیر، 16 نومبر، شام 6 بجے" (Intl's "6 PM" and Latin
+ * comma read badly aloud). Other locales use luxon/Intl names in the English pattern.
+ */
+export function spokenSlotLabel(at: Date, tz: string, locale = 'en'): string {
+  const dt = DateTime.fromJSDate(at, { zone: tz });
+  if (locale === 'ur' || locale.startsWith('ur-')) {
+    const ur = dt.setLocale('ur');
+    return `${ur.toFormat('cccc')}، ${dt.day} ${ur.toFormat('LLLL')}، ${urduHourLabel(dt.hour)}`;
+  }
+  return dt.setLocale(locale).toFormat('cccc d LLLL, h a');
+}
+
+/** Always-English slot label, for on-screen video text. */
+export const englishSlotLabel = (at: Date, tz: string) => spokenSlotLabel(at, tz, 'en');

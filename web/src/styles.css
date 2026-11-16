@@ -7,6 +7,10 @@
   --font-display: 'Fraunces Variable', 'Iowan Old Style', 'Charter', Georgia, serif;
   --font-ui: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  /* Urdu: Nastaliq where installed (Android/ChromeOS/Linux ship Noto; Windows has Urdu Typesetting),
+     else a Naskh Arabic-script face (macOS/iOS: Geeza Pro), else whatever the system picks. */
+  --font-urdu: 'Noto Nastaliq Urdu', 'Jameel Noori Nastaleeq', 'Urdu Typesetting', 'Noto Naskh Arabic', 'Geeza Pro', 'Segoe UI',
+    system-ui, sans-serif;
 
   --bg: #f5f1ea;
   --bg-glow: #f1e2d6;
@@ -1427,6 +1431,42 @@ a.story-title svg {
   font-weight: 600;
 }
 
+/* Text in the bulletin's spoken language (lang/dir set per edition). Arabic script is cursive:
+   no letter-spacing or optical-size tweaks, and Nastaliq needs extra line height. */
+:lang(ur) {
+  font-family: var(--font-urdu);
+  font-variation-settings: normal;
+  letter-spacing: 0;
+}
+.detail-title:lang(ur),
+.hero-title:lang(ur) {
+  line-height: 1.8;
+}
+.mini-title:lang(ur),
+.ed-title :lang(ur) {
+  line-height: 1.9;
+}
+.transcript:lang(ur) {
+  font-size: 20px;
+  line-height: 2.2;
+}
+.transcript:lang(ur) p:first-child::first-letter {
+  font-size: inherit;
+  float: none;
+  line-height: inherit;
+  padding: 0;
+  color: inherit;
+  font-weight: inherit;
+}
+.lang-native:lang(ur) {
+  font-size: 22px;
+  line-height: 1.6;
+}
+.voice-more {
+  justify-self: start;
+  margin-top: var(--s2);
+}
+
 /* ---------- sources ---------- */
 .my-sources {
   display: grid;
@@ -2402,5 +2442,63 @@ body:has(.landing) {
 @media (max-width: 400px) {
   .ob-step-name {
     display: none;
+  }
+}
+
+/* ---- video bulletins ---- */
+.detail-mode {
+  margin-top: var(--s2);
+}
+.detail-video {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  margin-top: var(--s3);
+  background: #0b1d3a;
+  border-radius: var(--r-md);
+}
+.video-note {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s2);
+  font-size: 14px;
+}
+.stories li.has-thumb {
+  grid-template-columns: 32px 1fr 88px;
+}
+.story-thumb {
+  width: 88px;
+  height: 50px;
+  object-fit: cover;
+  border-radius: var(--r-sm, 6px);
+  background: var(--line);
+}
+.story-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: var(--s1, 4px);
+  padding: 4px 10px;
+  min-height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent-text);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.switch-row:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+@media (min-width: 640px) {
+  .stories li.has-thumb {
+    grid-template-columns: 32px 1fr 128px;
+  }
+  .story-thumb {
+    width: 128px;
+    height: 72px;
   }
 }

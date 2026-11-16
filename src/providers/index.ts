@@ -1,6 +1,6 @@
 import type { Db } from '../db/client.ts';
 import type { Config } from '../shared/config.ts';
-import type { BlobStore, Deps, ScriptWriter, TtsProvider } from '../shared/deps.ts';
+import type { BlobStore, Deps, ScriptWriter, TtsProvider, VideoRenderer } from '../shared/deps.ts';
 import { LocalBlobStore } from './blobs/local.ts';
 import { S3BlobStore } from './blobs/s3.ts';
 import { FeedFetcher } from './feeds/fetch.ts';
@@ -9,6 +9,8 @@ import { MockScriptWriter } from './script/mock.ts';
 import { ElevenLabsTts } from './tts/elevenlabs.ts';
 import { MockTts } from './tts/mock.ts';
 import { OpenAiTts } from './tts/openai.ts';
+import { bundledFfmpegPath, FfmpegVideoRenderer } from './video/ffmpeg.ts';
+import { MockVideoRenderer } from './video/mock.ts';
 
 function buildTts(config: Config): TtsProvider {
   switch (config.ttsProvider) {
@@ -29,7 +31,15 @@ function buildBlobs(config: Config): BlobStore {
   return new S3BlobStore({ bucket: config.S3_BUCKET, region: config.S3_REGION, endpoint: config.S3_ENDPOINT });
 }
 
+function buildVideo(config: Config, feeds: FeedFetcher): VideoRenderer {
+  if (!config.VIDEO_ENABLED) return new MockVideoRenderer();
+  const ffmpegPath = config.FFMPEG_PATH ?? bundledFfmpegPath();
+  if (!ffmpegPath) throw new Error('VIDEO_ENABLED requires ffmpeg: reinstall ffmpeg-static or set FFMPEG_PATH');
+  return new FfmpegVideoRenderer({ ffmpegPath, images: feeds, concurrency: config.VIDEO_CONCURRENCY });
+}
+
 export function buildDeps(config: Config, db: Db): Deps {
+  const feeds = new FeedFetcher();
   const scriptWriter: ScriptWriter = config.ANTHROPIC_API_KEY
     ? new AnthropicScriptWriter({ apiKey: config.ANTHROPIC_API_KEY, model: config.SCRIPT_MODEL })
     : new MockScriptWriter();
@@ -38,8 +48,9 @@ export function buildDeps(config: Config, db: Db): Deps {
     db,
     scriptWriter,
     tts: buildTts(config),
+    video: buildVideo(config, feeds),
     blobs: buildBlobs(config),
-    feeds: new FeedFetcher(),
+    feeds,
     now: () => new Date(),
   };
 }

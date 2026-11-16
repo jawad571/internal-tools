@@ -152,3 +152,45 @@ describe('FeedFetcher limits and HTTP behaviour', () => {
     await expect(fetcher.probe('https://good.example.com/page')).rejects.toThrow("doesn't look like an RSS or Atom feed");
   });
 });
+
+describe('FeedFetcher.fetchImage', () => {
+  const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64)]);
+  const JPEG = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(64)]);
+
+  it('downloads and sniffs public images, following redirects', async () => {
+    const f = fakeFetch({
+      'https://cdn.example.com/a.png': () => new Response(PNG, { headers: { 'content-type': 'image/png' } }),
+      'https://cdn.example.com/old.jpg': () => new Response(null, { status: 301, headers: { location: '/b.jpg' } }),
+      'https://cdn.example.com/b.jpg': () => new Response(JPEG, { headers: { 'content-type': 'application/octet-stream' } }),
+    });
+    const fetcher = new FeedFetcher({ fetch: f.fetch, lookup: publicLookup });
+    expect((await fetcher.fetchImage('https://cdn.example.com/a.png')).mime).toBe('image/png');
+    const b = await fetcher.fetchImage('https://cdn.example.com/old.jpg');
+    expect(b).toEqual({ data: JPEG, mime: 'image/jpeg' });
+    expect(f.calls[0]!.headers.get('accept')).toMatch(/^image\//);
+  });
+
+  it('refuses private addresses, including via redirect', async () => {
+    const f = fakeFetch({ 'https://cdn.example.com/r.jpg': () => new Response(null, { status: 302, headers: { location: 'http://169.254.169.254/x.jpg' } }) });
+    const fetcher = new FeedFetcher({ fetch: f.fetch, lookup: lookupTable({ 'cdn.example.com': '93.184.216.34', 'inside.example.com': '10.0.0.2' }) });
+    await expect(fetcher.fetchImage('http://127.0.0.1/a.jpg')).rejects.toThrow(FeedProbeError);
+    await expect(fetcher.fetchImage('https://inside.example.com/a.jpg')).rejects.toThrow('not publicly reachable');
+    await expect(fetcher.fetchImage('https://cdn.example.com/r.jpg')).rejects.toThrow('not publicly reachable');
+    await expect(fetcher.fetchImage('file:///etc/passwd')).rejects.toThrow('Only http and https');
+    expect(f.calls).toHaveLength(1);
+  });
+
+  it('rejects non-images, oversize bodies and HTTP errors', async () => {
+    const f = fakeFetch({
+      'https://cdn.example.com/page': () => new Response('<html></html>', { headers: { 'content-type': 'text/html' } }),
+      'https://cdn.example.com/lies.jpg': () => new Response('<svg xmlns="http://www.w3.org/2000/svg"/>', { headers: { 'content-type': 'image/jpeg' } }),
+      'https://cdn.example.com/big.png': () => new Response(Buffer.concat([PNG, Buffer.alloc(2048)]), { headers: { 'content-type': 'image/png' } }),
+      'https://cdn.example.com/gone.png': () => new Response('nope', { status: 404 }),
+    });
+    const fetcher = new FeedFetcher({ fetch: f.fetch, lookup: publicLookup });
+    await expect(fetcher.fetchImage('https://cdn.example.com/page')).rejects.toThrow('Not an image');
+    await expect(fetcher.fetchImage('https://cdn.example.com/lies.jpg')).rejects.toThrow('Not a supported image');
+    await expect(fetcher.fetchImage('https://cdn.example.com/big.png', 1024)).rejects.toThrow('too large');
+    await expect(fetcher.fetchImage('https://cdn.example.com/gone.png')).rejects.toThrow('HTTP 404');
+  });
+});

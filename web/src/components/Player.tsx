@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router';
 import type { EditionDto } from '@shared/contracts';
-import { clock, editionMeta, editionTitle } from '../lib/format';
+import { clock, editionMeta, editionTitle, titleTextProps } from '../lib/format';
 import { SKIP, usePlayer } from '../state/player';
 import { Icon, SkipIcon } from './Icon';
 import { Spinner } from './ui';
@@ -82,7 +82,9 @@ export function HeroPlayer({ fallback }: { fallback: EditionDto }) {
           {rateLabel(p.rate)}
         </button>
       </div>
-      <h2 className="hero-title">{editionTitle(e)}</h2>
+      <h2 className="hero-title" {...titleTextProps(e)}>
+        {editionTitle(e)}
+      </h2>
       <p className="hero-meta">{editionMeta(e)}</p>
 
       <Scrubber time={time} duration={duration} onSeek={p.seekTo} disabled={!isLoaded} />
@@ -137,7 +139,9 @@ export function MiniPlayer() {
       <Link to="/listen" className="mini-info">
         <EqBars active={p.playing} />
         <span className="mini-text">
-          <span className="mini-title">{editionTitle(p.edition)}</span>
+          <span className="mini-title" {...titleTextProps(p.edition)}>
+            {editionTitle(p.edition)}
+          </span>
           <span className="mini-meta">
             {clock(p.time)} / {clock(p.duration)} · {editionMeta(p.edition)}
           </span>
